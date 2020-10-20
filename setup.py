@@ -7,9 +7,10 @@ setup(
     url='https://github.com/trailofbits/blockscraper',
     author='Trail of Bits',
     version='0.0.1',
-    packages=find_packages(),
+    packages=find_packages(exclude=['test']),
     python_requires='>=3.7',
     install_requires=[
+        'tqdm==4.48.0',
     ],
     entry_points={
         'console_scripts': [

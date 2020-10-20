@@ -7,7 +7,7 @@ import struct
 P = TypeVar("P")
 
 
-class Packable(metaclass=ABCMeta):
+class Packable(ABC):
     @abstractmethod
     def pack(self) -> bytes:
         raise NotImplementedError()
@@ -17,20 +17,35 @@ class Packable(metaclass=ABCMeta):
         raise NotImplementedError()
 
 
-class SizedInteger(int, Packable, ABC):
+class SizedIntegerMeta(ABCMeta):
     FORMAT: str
     BITS: int
+    BYTES: int
     SIGNED: bool
+    MAX_VALUE: int
+    MIN_VALUE: int
 
-    def __init__(self, value: int):
-        if 2**self.BITS - 1 < value:
-            raise ValueError(f"{value} is more than {self.BITS} bits!")
-        elif value < 0 and not self.SIGNED:
-            raise ValueError(f"{value} is negative but the integer is not signed!")
-        super().__init__(value)
+    def __init__(cls, name, bases, clsdict):
+        if name != "SizedInteger" and "FORMAT" not in clsdict:
+            raise ValueError(f"{name} subclasses `SizedInteger` but does not define a `FORMAT` class member")
+        super().__init__(name, bases, clsdict)
+        if name != "SizedInteger":
+            setattr(cls, "BYTES", struct.calcsize(cls.FORMAT))
+            setattr(cls, "BITS", cls.BYTES * 8)
+            setattr(cls, "SIGNED", cls.FORMAT.islower())
+            setattr(cls, "MAX_VALUE", 2**(cls.BITS - [0, 1][cls.SIGNED]) - 1)
+            setattr(cls, "MIN_VALUE", [0, -2**(cls.BYTES * 8 - [0, 1][cls.SIGNED])][cls.SIGNED])
+
+
+class SizedInteger(int, Packable, metaclass=SizedIntegerMeta):
+    def __new__(cls: SizedIntegerMeta, value: int):
+        retval: SizedInteger = int.__new__(cls, value)
+        if not (cls.MIN_VALUE <= retval <= cls.MAX_VALUE):
+            raise ValueError(f"{retval} is not in the range [{cls.MIN_VALUE}, {cls.MAX_VALUE}]")
+        return retval
 
     def pack(self) -> bytes:
-        return struct.pack(self.FORMAT, int(self))
+        return struct.pack(self.FORMAT, self)
 
     @classmethod
     def unpack(cls, data: bytes) -> "SizedInteger":
@@ -38,63 +53,43 @@ class SizedInteger(int, Packable, ABC):
 
 
 class Char(SizedInteger):
-    FORMAT = 'c'
-    BITS = 1
-    SIGNED = True
+    FORMAT = 'b'
 
 
 class UnsignedChar(SizedInteger):
-    FORMAT = 'c'
-    BITS = 1
-    SIGNED = False
+    FORMAT = 'B'
 
 
 class Short(SizedInteger):
     FORMAT = 'h'
-    BITS = 2
-    SIGNED = True
 
 
 class UnsignedShort(SizedInteger):
     FORMAT = 'H'
-    BITS = 2
-    SIGNED = False
 
 
 class Int(SizedInteger):
     FORMAT = 'i'
-    BITS = 4
-    SIGNED = True
 
 
 class UnsignedInt(SizedInteger):
     FORMAT = 'I'
-    BITS = 4
-    SIGNED = False
 
 
 class Long(SizedInteger):
     FORMAT = 'l'
-    BITS = 4
-    SIGNED = True
 
 
 class UnsignedLong(SizedInteger):
     FORMAT = 'L'
-    BITS = 4
-    SIGNED = False
 
 
 class LongLong(SizedInteger):
     FORMAT = 'q'
-    BITS = 8
-    SIGNED = True
 
 
 class UnsignedLongLong(SizedInteger):
     FORMAT = 'Q'
-    BITS = 8
-    SIGNED = False
 
 
 Int8 = Char
