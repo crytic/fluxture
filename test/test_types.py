@@ -57,3 +57,13 @@ class TestTypes(TestCase):
 
         s3 = S3(0, 1, 2)
         self.assertEqual(S3.unpack(s3.pack()), s3)
+
+    def test_byte_arrays(self):
+        class HasArrays(Struct):
+            a: SizedByteArray[1024]
+            b: SizedByteArray[0]
+            c: SizedByteArray[10]
+
+        self.assertRaises(ValueError, HasArrays, (b"abcd", b"defg", b"hijk"))
+        has_arrays = HasArrays(b"abcd", b"", b"hijk")
+        self.assertEqual(HasArrays.unpack(has_arrays.pack()), has_arrays)

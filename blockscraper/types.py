@@ -29,6 +29,61 @@ class Packable(Protocol):
     def unpack(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> P:
         ...
 
+    @classmethod
+    def unpack_partial(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> Tuple[P, bytes]:
+        ...
+
+
+class FixedSizeMeta(type):
+    num_bytes_is_defined: bool = False
+
+    @property
+    def num_bytes(cls) -> int:
+        if not cls.num_bytes_is_defined:
+            raise TypeError(f"{cls.__name__} must be subscripted with its size when used in a Struct! "
+                            f"(E.g., {cls.__name__}[1024] will specify that it is 1024 bytes.)")
+        return cls._num_bytes
+
+    def __getitem__(self, item):
+        if isinstance(item, int):
+            if item < 0:
+                raise ValueError(f"Fixed size {item} must be non-negative")
+            typename = f"{self.__name__}{item}"
+            return type(typename, (self,), {"_num_bytes": item, "num_bytes_is_defined": True})
+        else:
+            raise KeyError(item)
+
+
+class FixedSize(metaclass=FixedSizeMeta):
+    num_bytes_is_defined: bool = False
+
+
+class SizedByteArray(bytes, FixedSize):
+    @property
+    def num_bytes(self) -> int:
+        if not self.num_bytes_is_defined:
+            return len(self)
+        else:
+            return super().num_bytes
+
+    def __new__(cls, value: bytes, pad: bool = True):
+        if cls.num_bytes_is_defined and cls.num_bytes < len(value):
+            raise ValueError(f"{cls.__name__} can hold at most {cls.num_bytes} bytes, but {value!r} is longer!")
+        elif cls.num_bytes_is_defined and cls.num_bytes > len(value):
+            value = value + b"\0" * (cls.num_bytes - len(value))
+        return bytes.__new__(cls, value)
+
+    def pack(self, byte_order: ByteOrder = ByteOrder.NETWORK) -> bytes:
+        return self
+
+    @classmethod
+    def unpack(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> P:
+        return cls(data)
+
+    @classmethod
+    def unpack_partial(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> Tuple[P, bytes]:
+        return cls(data[:cls.num_bytes]), data[cls.num_bytes:]
+
 
 class SizedIntegerMeta(ABCMeta):
     FORMAT: str
@@ -67,6 +122,10 @@ class SizedInteger(int, metaclass=SizedIntegerMeta):
     @classmethod
     def unpack(cls, data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> "SizedInteger":
         return cls(struct.unpack(f"{byte_order.value}{cls.FORMAT}", data)[0])
+
+    @classmethod
+    def unpack_partial(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> Tuple[P, bytes]:
+        return cls(struct.unpack(f"{byte_order.value}{cls.FORMAT}", data[:cls.BYTES])[0]), data[cls.BYTES:]
 
     def __str__(self):
         return f"{self.__class__.c_type()}({int(self)})"
@@ -134,8 +193,7 @@ class StructMeta(ABCMeta):
                 if isinstance(field_type, Packable):
                     fields[field_name] = field_type
                 else:
-                    raise TypeError(f"Field {field_name} of {name} must be a SizedInteger or Binary Message, "
-                                    f"not {field_type}")
+                    raise TypeError(f"Field {field_name} of {name} must be Packable, not {field_type}")
         super().__init__(name, bases, clsdict)
         setattr(cls, "FIELDS", fields)
 
@@ -157,9 +215,19 @@ class Struct(metaclass=StructMeta):
 
     @classmethod
     def unpack(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> P:
-        return cls(*struct.unpack(
-            byte_order.value + "".join(field_type.FORMAT for field_type in cls.FIELDS.values()), data)
-        )
+        ret, remaining = cls.unpack_partial(data, byte_order)
+        if remaining:
+            raise ValueError(f"Unexpected trailing bytes: {remaining!r}")
+        return ret
+
+    @classmethod
+    def unpack_partial(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> Tuple[P, bytes]:
+        remaining_data = data
+        args = []
+        for field_type in cls.FIELDS.values():
+            field, remaining_data = field_type.unpack_partial(remaining_data, byte_order)
+            args.append(field)
+        return cls(*args), remaining_data
 
     def __contains__(self, field_name: str):
         return field_name in self.__class__.FIELDS
