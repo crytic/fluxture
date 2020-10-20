@@ -26,3 +26,34 @@ class TestTypes(TestCase):
                 value = random.randint(int_type.MIN_VALUE, int_type.MAX_VALUE)
                 packed = int_type(value).pack()
                 self.assertEqual(int_type.unpack(packed), value)
+
+    def test_empty_struct(self):
+        class EmptyStruct(Struct):
+            pass
+        s = EmptyStruct()
+        self.assertEqual(s, EmptyStruct.unpack(s.pack()))
+
+    def test_struct_comparison(self):
+        class S1(Struct):
+            a: Int32
+            b: UnsignedChar
+            c: UInt64
+
+        class S2(Struct):
+            a: Int32
+            b: UnsignedChar
+            c: UInt64
+
+        self.assertRaises(ValueError, S1, (0, 1))
+        self.assertRaises(ValueError, S1, (0, 1, 2, 3))
+        self.assertEqual(S1(0, 1, 2), S2(0, 1, 2))
+        self.assertNotEqual(S1(0, 1, 2), S2(0, 1, 3))
+
+    def test_struct_packing(self):
+        class S3(Struct):
+            a: Int32
+            b: UInt64
+            c: Int16
+
+        s3 = S3(0, 1, 2)
+        self.assertEqual(S3.unpack(s3.pack()), s3)
