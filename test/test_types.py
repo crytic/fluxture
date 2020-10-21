@@ -4,7 +4,7 @@ from tqdm import tqdm, trange
 from typing import List
 from unittest import TestCase
 
-from blockscraper.types import *
+from blockscraper.serialization import *
 
 
 class TestTypes(TestCase):

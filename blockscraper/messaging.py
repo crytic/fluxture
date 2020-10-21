@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Generic, Type, TypeVar
 
-from .types import ByteOrder, Struct
+from .serialization import ByteOrder, Struct
 
 
 M = TypeVar("M", bound="Message")

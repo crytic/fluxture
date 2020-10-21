@@ -42,8 +42,17 @@ class BigEndian:
     def __class_getitem__(cls, item: Type[Packable]):
         def big_endian_pack(self, byte_order: ByteOrder = ByteOrder.BIG) -> bytes:
             return item.pack(self, byte_order=ByteOrder.BIG)
+
+        def big_endian_unpack(data: bytes, byte_order: ByteOrder = ByteOrder.BIG):
+            return item.unpack(data, byte_order=ByteOrder.BIG)
+
+        def big_endian_unpack_partial(data: bytes, byte_order: ByteOrder = ByteOrder.BIG):
+            return item.unpack_partial(data, byte_order=ByteOrder.BIG)
+
         return type(f"{item.__name__}BigEndian", (item,), {
-            "pack": big_endian_pack
+            "pack": big_endian_pack,
+            "unpack": big_endian_unpack,
+            "unpack_partial": big_endian_unpack_partial
         })
 
 
@@ -51,8 +60,17 @@ class LittleEndian:
     def __class_getitem__(cls, item: Type[Packable]):
         def little_endian_pack(self, byte_order: ByteOrder = ByteOrder.LITTLE) -> bytes:
             return item.pack(self, byte_order=ByteOrder.LITTLE)
+
+        def little_endian_unpack(data: bytes, byte_order: ByteOrder = ByteOrder.LITTLE):
+            return item.unpack(data, byte_order=ByteOrder.LITTLE)
+
+        def little_endian_unpack_partial(data: bytes, byte_order: ByteOrder = ByteOrder.LITTLE):
+            return item.unpack_partial(data, byte_order=ByteOrder.LITTLE)
+
         return type(f"{item.__name__}LittleEndian", (item,), {
-            "pack": little_endian_pack
+            "pack": little_endian_pack,
+            "unpack": little_endian_unpack,
+            "unpack_partial": little_endian_unpack_partial
         })
 
 

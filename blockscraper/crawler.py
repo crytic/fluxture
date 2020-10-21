@@ -44,6 +44,8 @@ class Crawler(Generic[N], metaclass=ABCMeta):
 
     async def _crawl_node(self, node: N, futures: List[Future]):
         neighbors = await self.blockchain.get_neighbors(node)
+        for neighbor in neighbors:
+            await neighbor.connect()
         self.crawl.set_neighbors(node, neighbors)
         futures.extend([
             ensure_future(self._crawl_node(neighbor, futures))
