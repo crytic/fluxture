@@ -1,4 +1,5 @@
 import time
+from ipaddress import ip_address
 from unittest import TestCase
 
 from blockscraper.bitcoin import BitcoinMessage, NetAddr, VersionMessage
@@ -45,3 +46,5 @@ class TestBitcoin(TestCase):
         self.assertEqual(msg.timestamp, 1415483324)
         self.assertEqual(msg.addr_recv.port, 8333)
         self.assertEqual(msg.addr_from.port, 8333)
+        self.assertEqual(msg.addr_recv.ip, ip_address("::ffff:c61b:6409"))
+        self.assertEqual(msg.addr_from.ip, ip_address("::ffff:cb00:71c0"))

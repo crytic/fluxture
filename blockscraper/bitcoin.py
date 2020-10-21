@@ -129,25 +129,20 @@ class VarStr(bytes, serialization.AbstractPackable):
 
 class NetAddr(serialization.Struct):
     services: serialization.UInt64
-    ip: serialization.SizedByteArray[16]
+    ip: serialization.BigEndian[serialization.IPv6Address]
     port: serialization.BigEndian[serialization.UInt16]
 
     def __init__(
             self,
             services: int = 0,
-            ip: Optional[Union[IPv4Address, IPv6Address, str, serialization.SizedByteArray[16]]] = None,
+            ip: Optional[Union[serialization.IPv6Address, str, bytes]] = None,
             port: int = 8333
     ):
         if ip is None:
             ip = get_public_ip()
-        elif isinstance(ip, str):
-            try:
-                ip = ip_address(socket.gethostbyname(ip))
-            except socket.gaierror:
-                ip = ip_address(ip)
-        if not isinstance(ip, serialization.SizedByteArray):
+        if not isinstance(ip, serialization.IPv6Address):
             # IP is big-endian in Bitcoin
-            ip = serialization.SizedByteArray(int(ip).to_bytes(16, byteorder='big'))
+            ip = serialization.IPv6Address(ip)
         super().__init__(services=services, ip=ip, port=port)
 
 

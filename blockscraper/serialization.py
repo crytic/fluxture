@@ -1,10 +1,11 @@
+import ipaddress
 import itertools
 from abc import ABCMeta, ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import ValuesView
 from enum import Enum
 from typing import (
-    Iterator, KeysView, OrderedDict as OrderedDictType, Tuple, Type, TypeVar, ValuesView as ValuesViewType
+    Iterator, KeysView, OrderedDict as OrderedDictType, Tuple, Type, TypeVar, Union, ValuesView as ValuesViewType
 )
 from typing_extensions import Protocol, runtime_checkable
 import struct
@@ -90,6 +91,33 @@ class AbstractPackable(ABC):
         if remaining:
             raise ValueError(f"Unexpected trailing bytes: {remaining!r}")
         return ret
+
+
+class IPv6Address(ipaddress.IPv6Address, AbstractPackable):
+    def __init__(self, address: Union[str, bytes, ipaddress.IPv6Address, ipaddress.IPv4Address]):
+        if isinstance(address, str) or isinstance(address, bytes):
+            address = ipaddress.ip_address(address)
+        if isinstance(address, ipaddress.IPv4Address):
+            # convert ip4 to rfc 3056 IPv6 6to4 address
+            # http://tools.ietf.org/html/rfc3056#section-2
+            prefix6to4 = int(ipaddress.IPv6Address("2002::"))
+            ipv4 = address
+            address = ipaddress.IPv6Address(prefix6to4 | (int(ipv4) << 80))
+            assert address.sixtofour == ipv4
+        super().__init__(address.packed)
+
+    def pack(self, byte_order: ByteOrder = ByteOrder.BIG) -> bytes:
+        if byte_order == ByteOrder.BIG:
+            return self.packed
+        else:
+            return bytes(reversed(self.packed))
+
+    @classmethod
+    def unpack_partial(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> Tuple[P, bytes]:
+        if byte_order == ByteOrder.BIG:
+            return cls(data[:16]), data[16:]
+        else:
+            return cls(bytes(reversed(data[:16]))), data[16:]
 
 
 class SizeMeta(type):
