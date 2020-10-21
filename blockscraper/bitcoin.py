@@ -131,7 +131,7 @@ class NetAddr(types.Struct):
     time: types.UInt32
     services: types.UInt64
     ip: types.SizedByteArray[16]
-    port: types.UInt16
+    port: types.BigEndian[types.UInt16]
 
     def __init__(
             self,

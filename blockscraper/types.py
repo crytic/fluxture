@@ -38,6 +38,24 @@ class Packable(Protocol):
         ...
 
 
+class BigEndian:
+    def __class_getitem__(cls, item: Type[Packable]):
+        def big_endian_pack(self, byte_order: ByteOrder = ByteOrder.BIG) -> bytes:
+            return item.pack(self, byte_order=ByteOrder.BIG)
+        return type(f"{item.__name__}BigEndian", (item,), {
+            "pack": big_endian_pack
+        })
+
+
+class LittleEndian:
+    def __class_getitem__(cls, item: Type[Packable]):
+        def little_endian_pack(self, byte_order: ByteOrder = ByteOrder.LITTLE) -> bytes:
+            return item.pack(self, byte_order=ByteOrder.LITTLE)
+        return type(f"{item.__name__}LittleEndian", (item,), {
+            "pack": little_endian_pack
+        })
+
+
 class AbstractPackable(ABC):
     @abstractmethod
     def pack(self, byte_order: ByteOrder = ByteOrder.NETWORK) -> bytes:
@@ -144,7 +162,7 @@ class SizedIntegerMeta(ABCMeta):
     MIN_VALUE: int
 
     def __init__(cls, name, bases, clsdict):
-        if name != "SizedInteger" and "FORMAT" not in clsdict:
+        if name != "SizedInteger" and "FORMAT" not in clsdict and (not isinstance(cls.FORMAT, str) or not cls.FORMAT):
             raise ValueError(f"{name} subclasses `SizedInteger` but does not define a `FORMAT` class member")
         super().__init__(name, bases, clsdict)
         if name != "SizedInteger":
@@ -296,8 +314,11 @@ class Struct(metaclass=StructMeta):
             except UnpackError:
                 errored = True
             if errored:
+                parsed_fields = [f"{field_name} = {arg!r}" for field_name, arg in zip(cls.FIELDS.keys(), args)]
+                parsed_fields = ", ".join(parsed_fields)
                 raise UnpackError(f"Error parsing field {cls.__name__}.{field_name} (field {len(args)+1}) of type "
-                                  f"{field_type.__name__} from bytes {remaining_data!r}")
+                                  f"{field_type.__name__} from bytes {remaining_data!r}. Prior parsed field values: "
+                                  f"{parsed_fields}")
             args.append(field)
         return cls(*args), remaining_data
 
@@ -337,3 +358,7 @@ class Struct(metaclass=StructMeta):
         types = "".join(f"    {field_name} = {field_value!s};\n" for field_name, field_value in self.items())
         newline = "\n"
         return f"typedef struct {{{['', newline][len(types) > 0]}{types}}} {self.__class__.__name__}"
+
+    def __repr__(self):
+        args = [f"{name}={getattr(self, name)!r}" for name in self.__class__.FIELDS.keys()]
+        return f"{self.__class__.__name__}({', '.join(args)})"
