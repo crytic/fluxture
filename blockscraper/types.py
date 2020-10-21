@@ -1,5 +1,5 @@
 import itertools
-from abc import ABCMeta
+from abc import ABCMeta, ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import ValuesView
 from enum import Enum
@@ -34,8 +34,27 @@ class Packable(Protocol):
         ...
 
 
-class FixedSizeMeta(type):
+class AbstractPackable(ABC):
+    @abstractmethod
+    def pack(self, byte_order: ByteOrder = ByteOrder.NETWORK) -> bytes:
+        raise NotImplementedError()
+
+    @classmethod
+    @abstractmethod
+    def unpack_partial(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> Tuple[P, bytes]:
+        raise NotImplementedError()
+
+    @classmethod
+    def unpack(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> P:
+        ret, remaining = cls.unpack_partial(data, byte_order)
+        if remaining:
+            raise ValueError(f"Unexpected trailing bytes: {remaining!r}")
+        return ret
+
+
+class SizeMeta(type):
     num_bytes_is_defined: bool = False
+    dependent_type_is_defined: bool = False
 
     @property
     def num_bytes(cls) -> int:
@@ -44,24 +63,51 @@ class FixedSizeMeta(type):
                             f"(E.g., {cls.__name__}[1024] will specify that it is 1024 bytes.)")
         return cls._num_bytes
 
+    @property
+    def size_field_name(cls) -> str:
+        if not cls.dependent_type_is_defined:
+            raise TypeError(f"{cls.__name__} must be subscripted with the name of its size field when used in a Struct!"
+                            f" (E.g., {cls.__name__}[\"length\"] will specify that its length is specified by the "
+                            "`length` field.)")
+        return cls._size_field_name
+
     def __getitem__(self, item):
         if isinstance(item, int):
             if item < 0:
                 raise ValueError(f"Fixed size {item} must be non-negative")
             typename = f"{self.__name__}{item}"
             return type(typename, (self,), {"_num_bytes": item, "num_bytes_is_defined": True})
+        elif isinstance(item, str):
+            typename = f"{self.__name__}{item}"
+            return type(typename, (self,), {
+                "_size_field_name": item, "dependent_type_is_defined": True
+            })
         else:
             raise KeyError(item)
 
 
-class FixedSize(metaclass=FixedSizeMeta):
+class Sized(metaclass=SizeMeta):
     num_bytes_is_defined: bool = False
+    dependent_type_is_defined: bool = False
 
-
-class SizedByteArray(bytes, FixedSize):
     @property
     def num_bytes(self) -> int:
-        if not self.num_bytes_is_defined:
+        if self.num_bytes_is_defined:
+            return super().num_bytes
+        elif self.dependent_type_is_defined:
+            raise NotImplementedError()
+        else:
+            raise ValueError(f"{self} does not have its size set!")
+
+    @property
+    def has_size(self) -> bool:
+        return self.num_bytes_is_defined or self.dependent_type_is_defined
+
+
+class SizedByteArray(bytes, Sized):
+    @property
+    def num_bytes(self) -> int:
+        if not self.has_size:
             return len(self)
         else:
             return super().num_bytes
@@ -179,6 +225,11 @@ Int32 = Long
 UInt32 = UnsignedLong
 Int64 = LongLong
 UInt64 = UnsignedLongLong
+
+
+class Bool(bool, UInt8):
+    def __new__(cls, value: bool):
+        return bool.__new__(cls, value)
 
 
 class StructMeta(ABCMeta):

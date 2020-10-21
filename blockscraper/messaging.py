@@ -25,4 +25,9 @@ class Message(Generic[R], ABC):
 
 
 class BinaryMessage(Generic[R], Message[R], Struct, ABC):
-    pass
+    def serialize(self) -> bytes:
+        return self.pack()
+
+    @classmethod
+    def deserialize(cls: M, data: bytes) -> M:
+        return cls.unpack(data)
