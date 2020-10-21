@@ -1,8 +1,9 @@
 import asyncio
 import socket
+from hashlib import sha256
 from ipaddress import ip_address, IPv4Address, IPv6Address
 from time import time as current_time
-from typing import FrozenSet, Optional, Tuple, Type, Union
+from typing import Dict, FrozenSet, Optional, Tuple, Type, TypeVar, Union
 
 from .blockchain import Blockchain, get_public_ip, Node
 from .messaging import BinaryMessage
@@ -10,9 +11,65 @@ from . import types
 from .types import ByteOrder, P
 
 
-class BitcoinMessage(BinaryMessage):
-    non_serialized = "byte_order",
+BITCOIN_MAINNET_MAGIC = 0xD9B4BEF9
+
+
+B = TypeVar('B', bound="BitcoinMessage")
+
+
+class BitcoinMessageHeader(BinaryMessage):
+    non_serialized = "byte_order"
     byte_order = ByteOrder.LITTLE
+
+    magic: types.UInt32
+    command: types.SizedByteArray[12]
+    length: types.UInt32
+    checksum: types.SizedByteArray[4]
+
+
+MESSAGES_BY_COMMAND: Dict[str, Type["BitcoinMessage"]] = {}
+
+
+def bitcoin_checksum(payload: bytes) -> bytes:
+    return sha256(sha256(payload).digest()).digest()[:4]
+
+
+class BitcoinMessage(BinaryMessage):
+    non_serialized = "byte_order", "command"
+    byte_order = ByteOrder.LITTLE
+    command: Optional[str] = None
+
+    def __init_subclass__(cls, **kwargs):
+        if cls.command is None:
+            raise TypeError(f"{cls.__name__} extends BitcoinMessage but does not speficy a command string!")
+        elif cls.command in MESSAGES_BY_COMMAND:
+            raise TypeError(f"The command {cls.command} is already registered to message class "
+                            f"{MESSAGES_BY_COMMAND[cls.command]}")
+        MESSAGES_BY_COMMAND[cls.command] = cls
+
+    def serialize(self) -> bytes:
+        payload = super().serialize()
+        return BitcoinMessageHeader(
+            magic=BITCOIN_MAINNET_MAGIC,
+            command=self.command.encode("utf-8"),
+            length=len(payload),
+            checksum=bitcoin_checksum(payload)
+        ).serialize() + payload
+
+    @classmethod
+    def deserialize(cls: B, data: bytes) -> B:
+        header, payload = BitcoinMessageHeader.unpack_partial(data)
+        if header.magic != BITCOIN_MAINNET_MAGIC:
+            raise ValueError(f"Message header magic was {header.magic}, but expected {BITCOIN_MAINNET_MAGIC!r} "
+                             "for Bitcoin mainnet!")
+        elif header.length != len(payload):
+            raise ValueError(f"Invalid length value of {header.length}; expected {len(payload)}")
+        elif header.command not in MESSAGES_BY_COMMAND:
+            raise NotImplementedError(f"TODO: Implement Bitcoin command \"{header.command}\"")
+        expected_checksum = bitcoin_checksum(payload)
+        if header.checksum != expected_checksum:
+            raise ValueError(f"Invalid message checksum; got {header.checksum!r} but expected {expected_checksum!r}")
+        return MESSAGES_BY_COMMAND[header.command].unpack(payload, MESSAGES_BY_COMMAND[header.command].byte_order)
 
 
 class VarInt(int, types.AbstractPackable):
@@ -61,7 +118,7 @@ class VarStr(bytes, types.AbstractPackable):
         return remainder[:length], remainder[length:]
 
 
-class NetAddr(BitcoinMessage):
+class NetAddr(types.Struct):
     time: types.UInt32
     services: types.UInt64
     ip: types.SizedByteArray[16]
@@ -87,6 +144,7 @@ class NetAddr(BitcoinMessage):
 
 
 class VersionMessage(BitcoinMessage):
+    command = "version"
     version: types.Int32
     services: types.UInt64
     timestamp: types.Int64
