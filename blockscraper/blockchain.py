@@ -7,6 +7,15 @@ from typing import FrozenSet, Generic, Tuple, TypeVar, Union
 from .messaging import Message, R
 
 
+def get_public_ip() -> Union[IPv4Address, IPv6Address]:
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.connect(("8.8.8.8", 80))
+    try:
+        return ip_address(s.getsockname()[0])
+    finally:
+        s.close()
+
+
 class Node:
     def __init__(self, address: Union[str, IPv4Address, IPv6Address], port: int):
         if isinstance(address, str):

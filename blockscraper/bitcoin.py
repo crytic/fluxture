@@ -1,19 +1,25 @@
 import asyncio
 import socket
-from ipaddress import IPv4Address, IPv6Address
-from typing import FrozenSet, Union, Tuple, Type
+from ipaddress import ip_address, IPv4Address, IPv6Address
+from time import time as current_time
+from typing import FrozenSet, Optional, Tuple, Type, Union
 
-from .blockchain import Blockchain, Node
+from .blockchain import Blockchain, get_public_ip, Node
 from .messaging import BinaryMessage
 from . import types
 from .types import ByteOrder, P
+
+
+class BitcoinMessage(BinaryMessage):
+    non_serialized = "byte_order",
+    byte_order = ByteOrder.LITTLE
 
 
 class VarInt(int, types.AbstractPackable):
     def __new__(cls, value: int):
         return int.__new__(cls, value)
 
-    def pack(self, byte_order: types.ByteOrder = types.ByteOrder.NETWORK) -> bytes:
+    def pack(self, byte_order: types.ByteOrder = types.ByteOrder.LITTLE) -> bytes:
         value = int(self)
         if value < 0xFD:
             return bytes([value])
@@ -27,7 +33,7 @@ class VarInt(int, types.AbstractPackable):
             raise ValueError(f"Value {value} must be less than {types.UInt64.MAX_VALUE}")
 
     @classmethod
-    def unpack_partial(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> Tuple[P, bytes]:
+    def unpack_partial(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.LITTLE) -> Tuple[P, bytes]:
         if data[0] < 0xFD:
             return cls(data[0]), data[1:]
         elif data[0] == 0xFD:
@@ -44,25 +50,43 @@ class VarStr(bytes, types.AbstractPackable):
     def __new__(cls, value: bytes):
         return bytes.__new__(cls, value)
 
-    def pack(self, byte_order: types.ByteOrder = types.ByteOrder.NETWORK) -> bytes:
+    def pack(self, byte_order: types.ByteOrder = types.ByteOrder.LITTLE) -> bytes:
         return VarInt(len(self)).pack(byte_order) + self
 
     @classmethod
-    def unpack_partial(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> Tuple[P, bytes]:
+    def unpack_partial(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.LITTLE) -> Tuple[P, bytes]:
         length, remainder = VarInt.unpack_partial(data, byte_order=byte_order)
         if len(remainder) < length:
             raise ValueError(f"Expected a byte sequence of length {length} but instead got {remainder!r}")
         return remainder[:length], remainder[length:]
 
 
-class NetAddr(BinaryMessage):
+class NetAddr(BitcoinMessage):
     time: types.UInt32
     services: types.UInt64
     ip: types.SizedByteArray[16]
     port: types.UInt16
 
+    def __init__(
+            self,
+            time: Optional[int] = None,
+            services: int = 0,
+            ip: Optional[Union[IPv4Address, IPv6Address, str, types.SizedByteArray[16]]] = None,
+            port: int = 53
+    ):
+        if ip is None:
+            ip = get_public_ip()
+        elif isinstance(ip, str):
+            ip = ip_address(socket.gethostbyname(ip))
+        if not isinstance(ip, types.SizedByteArray):
+            # IP is big-endian in Bitcoin
+            ip = types.SizedByteArray(int(ip).to_bytes(16, byteorder='big'))
+        if time is None:
+            time = int(current_time())
+        super().__init__(time=time, services=services, ip=ip, port=port)
 
-class VersionMessage(BinaryMessage):
+
+class VersionMessage(BitcoinMessage):
     version: types.Int32
     services: types.UInt64
     timestamp: types.Int64

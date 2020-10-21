@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Generic, Type, TypeVar
 
-from .types import Struct
+from .types import ByteOrder, Struct
 
 
 M = TypeVar("M", bound="Message")
@@ -25,9 +25,12 @@ class Message(Generic[R], ABC):
 
 
 class BinaryMessage(Generic[R], Message[R], Struct, ABC):
+    non_serialized = "byte_order",
+    byte_order: ByteOrder = ByteOrder.NETWORK
+
     def serialize(self) -> bytes:
-        return self.pack()
+        return self.pack(self.byte_order)
 
     @classmethod
     def deserialize(cls: M, data: bytes) -> M:
-        return cls.unpack(data)
+        return cls.unpack(data, cls.byte_order)

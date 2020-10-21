@@ -219,6 +219,7 @@ class UnsignedLongLong(SizedInteger):
 
 Int8 = Char
 UInt8 = UnsignedChar
+Bool = UInt8
 Int16 = Short
 UInt16 = UnsignedShort
 Int32 = Long
@@ -227,19 +228,19 @@ Int64 = LongLong
 UInt64 = UnsignedLongLong
 
 
-class Bool(bool, UInt8):
-    def __new__(cls, value: bool):
-        return bool.__new__(cls, value)
-
-
 class StructMeta(ABCMeta):
     FIELDS: OrderedDictType[str, Type[Packable]]
 
     def __init__(cls, name, bases, clsdict):
         fields = OrderedDict()
+        if "non_serialized" in clsdict:
+            non_serialized = set(clsdict["non_serialized"])
+        else:
+            non_serialized = set()
+        non_serialized |= {"FIELDS", "non_serialized"}
         if "__annotations__" in clsdict:
             for field_name, field_type in clsdict["__annotations__"].items():
-                if field_name == "FIELDS":
+                if field_name in non_serialized:
                     continue
                 if isinstance(field_type, Packable):
                     fields[field_name] = field_type
@@ -255,9 +256,14 @@ class Struct(metaclass=StructMeta):
         if len(args) > len(unsatisfied_fields):
             raise ValueError(f"Unexpected positional argument: {args[len(unsatisfied_fields)]}")
         elif len(args) < len(unsatisfied_fields):
-            raise ValueError(f"Missing argument for {unsatisfied_fields[0]}")
+            raise ValueError(f"Missing argument for {unsatisfied_fields[0]} in {self.__class__}")
         for name, value in itertools.chain(kwargs.items(), zip(unsatisfied_fields, args)):
-            setattr(self, name, self.__class__.FIELDS[name](value))
+            if isinstance(value, self.__class__.FIELDS[name]):
+                # the value was already passed as the correct type
+                setattr(self, name, value)
+            else:
+                # we need to construct the correct type
+                setattr(self, name, self.__class__.FIELDS[name](value))
         super().__init__()
 
     def pack(self, byte_order: ByteOrder = ByteOrder.NETWORK) -> bytes:
