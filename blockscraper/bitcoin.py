@@ -11,7 +11,7 @@ from . import types
 from .types import ByteOrder, P
 
 
-BITCOIN_MAINNET_MAGIC = 0xD9B4BEF9
+BITCOIN_MAINNET_MAGIC = b"\xf9\xbe\xb4\xd9"
 
 
 B = TypeVar('B', bound="BitcoinMessage")
@@ -21,10 +21,18 @@ class BitcoinMessageHeader(BinaryMessage):
     non_serialized = "byte_order"
     byte_order = ByteOrder.LITTLE
 
-    magic: types.UInt32
+    magic: types.SizedByteArray[4]
     command: types.SizedByteArray[12]
     length: types.UInt32
     checksum: types.SizedByteArray[4]
+
+    @property
+    def decoded_command(self) -> str:
+        decoded = self.command.decode("utf-8")
+        first_null_byte = decoded.find("\0")
+        if any(c != "\0" for c in decoded[first_null_byte:]):
+            raise ValueError(f"Command name {self.command!r} includes bytes after the null terminator!")
+        return decoded[:first_null_byte]
 
 
 MESSAGES_BY_COMMAND: Dict[str, Type["BitcoinMessage"]] = {}
@@ -58,18 +66,19 @@ class BitcoinMessage(BinaryMessage):
 
     @classmethod
     def deserialize(cls: B, data: bytes) -> B:
-        header, payload = BitcoinMessageHeader.unpack_partial(data)
+        header, payload = BitcoinMessageHeader.unpack_partial(data, byte_order=BitcoinMessageHeader.byte_order)
         if header.magic != BITCOIN_MAINNET_MAGIC:
             raise ValueError(f"Message header magic was {header.magic}, but expected {BITCOIN_MAINNET_MAGIC!r} "
                              "for Bitcoin mainnet!")
         elif header.length != len(payload):
             raise ValueError(f"Invalid length value of {header.length}; expected {len(payload)}")
-        elif header.command not in MESSAGES_BY_COMMAND:
+        elif header.decoded_command not in MESSAGES_BY_COMMAND:
             raise NotImplementedError(f"TODO: Implement Bitcoin command \"{header.command}\"")
+        decoded_command = header.decoded_command
         expected_checksum = bitcoin_checksum(payload)
         if header.checksum != expected_checksum:
             raise ValueError(f"Invalid message checksum; got {header.checksum!r} but expected {expected_checksum!r}")
-        return MESSAGES_BY_COMMAND[header.command].unpack(payload, MESSAGES_BY_COMMAND[header.command].byte_order)
+        return MESSAGES_BY_COMMAND[decoded_command].unpack(payload, MESSAGES_BY_COMMAND[decoded_command].byte_order)
 
 
 class VarInt(int, types.AbstractPackable):
@@ -129,7 +138,7 @@ class NetAddr(types.Struct):
             time: Optional[int] = None,
             services: int = 0,
             ip: Optional[Union[IPv4Address, IPv6Address, str, types.SizedByteArray[16]]] = None,
-            port: int = 53
+            port: int = 8333
     ):
         if ip is None:
             ip = get_public_ip()

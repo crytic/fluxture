@@ -20,6 +20,10 @@ class ByteOrder(Enum):
     NETWORK = "!"
 
 
+class UnpackError(RuntimeError):
+    pass
+
+
 @runtime_checkable
 class Packable(Protocol):
     def pack(self, byte_order: ByteOrder = ByteOrder.NETWORK) -> bytes:
@@ -171,10 +175,14 @@ class SizedInteger(int, metaclass=SizedIntegerMeta):
 
     @classmethod
     def unpack_partial(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> Tuple[P, bytes]:
-        return cls(struct.unpack(f"{byte_order.value}{cls.FORMAT}", data[:cls.BYTES])[0]), data[cls.BYTES:]
+        try:
+            return cls(struct.unpack(f"{byte_order.value}{cls.FORMAT}", data[:cls.BYTES])[0]), data[cls.BYTES:]
+        except struct.error:
+            pass
+        raise UnpackError(f"Error unpacking {cls.__name__} from the front of {data!r}")
 
     def __str__(self):
-        return f"{self.__class__.c_type()}({int(self)})"
+        return f"{self.__class__.c_type}({super().__str__()})"
 
 
 class Char(SizedInteger):
@@ -281,8 +289,15 @@ class Struct(metaclass=StructMeta):
     def unpack_partial(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> Tuple[P, bytes]:
         remaining_data = data
         args = []
-        for field_type in cls.FIELDS.values():
-            field, remaining_data = field_type.unpack_partial(remaining_data, byte_order)
+        for field_name, field_type in cls.FIELDS.items():
+            try:
+                field, remaining_data = field_type.unpack_partial(remaining_data, byte_order)
+                errored = False
+            except UnpackError:
+                errored = True
+            if errored:
+                raise UnpackError(f"Error parsing field {cls.__name__}.{field_name} (field {len(args)+1}) of type "
+                                  f"{field_type.__name__} from bytes {remaining_data!r}")
             args.append(field)
         return cls(*args), remaining_data
 
