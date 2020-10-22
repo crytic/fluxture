@@ -1,9 +1,10 @@
 import asyncio
 import socket
+from abc import ABC
 from hashlib import sha256
-from ipaddress import ip_address, IPv4Address, IPv6Address
+from ipaddress import IPv4Address, IPv6Address
 from time import time as current_time
-from typing import Dict, FrozenSet, Generic, Optional, Tuple, Type, TypeVar, Union
+from typing import AsyncIterator, Dict, FrozenSet, Optional, Tuple, Type, TypeVar, Union
 
 from .blockchain import Blockchain, get_public_ip, Node
 from .messaging import BinaryMessage
@@ -15,6 +16,10 @@ BITCOIN_MAINNET_MAGIC = b"\xf9\xbe\xb4\xd9"
 
 
 B = TypeVar('B', bound="BitcoinMessage")
+
+
+class BitcoinError(RuntimeError):
+    pass
 
 
 class BitcoinMessageHeader(BinaryMessage):
@@ -34,6 +39,13 @@ class BitcoinMessageHeader(BinaryMessage):
             raise ValueError(f"Command name {self.command!r} includes bytes after the null terminator!")
         return decoded[:first_null_byte]
 
+    @classmethod
+    async def next_message(cls, reader: asyncio.StreamReader) -> Optional["BitcoinMessageHeader"]:
+        data = await reader.read(4 + 12 + serialization.UInt32.BYTES + 4)
+        if not data:
+            return None
+        return cls.deserialize(data)
+
 
 MESSAGES_BY_COMMAND: Dict[str, Type["BitcoinMessage"]] = {}
 
@@ -42,8 +54,8 @@ def bitcoin_checksum(payload: bytes) -> bytes:
     return sha256(sha256(payload).digest()).digest()[:4]
 
 
-class BitcoinMessage(Generic[B], BinaryMessage[B]):
-    non_serialized = "byte_order", "command", "reply_type"
+class BitcoinMessage(BinaryMessage, ABC):
+    non_serialized = "byte_order", "command"
     byte_order = ByteOrder.LITTLE
     command: Optional[str] = None
 
@@ -65,20 +77,48 @@ class BitcoinMessage(Generic[B], BinaryMessage[B]):
         ).serialize() + payload
 
     @classmethod
-    def deserialize(cls: B, data: bytes) -> B:
-        header, payload = BitcoinMessageHeader.unpack_partial(data, byte_order=BitcoinMessageHeader.byte_order)
+    def deserialize_partial(
+            cls,
+            data: bytes,
+            header: Optional[BitcoinMessageHeader] = None
+    ) -> Tuple["BitcoinMessage", bytes]:
+        if header is None:
+            header, payload = BitcoinMessageHeader.unpack_partial(data, byte_order=BitcoinMessageHeader.byte_order)
+        else:
+            payload = data
         if header.magic != BITCOIN_MAINNET_MAGIC:
             raise ValueError(f"Message header magic was {header.magic}, but expected {BITCOIN_MAINNET_MAGIC!r} "
                              "for Bitcoin mainnet!")
-        elif header.length != len(payload):
-            raise ValueError(f"Invalid length value of {header.length}; expected {len(payload)}")
+        elif header.length < len(payload):
+            raise ValueError(f"Invalid payload length of {len(payload)}; expected at least {header.length} bytes")
         elif header.decoded_command not in MESSAGES_BY_COMMAND:
             raise NotImplementedError(f"TODO: Implement Bitcoin command \"{header.command}\"")
+        payload, remainder = payload[:header.length], payload[header.length:]
         decoded_command = header.decoded_command
         expected_checksum = bitcoin_checksum(payload)
         if header.checksum != expected_checksum:
             raise ValueError(f"Invalid message checksum; got {header.checksum!r} but expected {expected_checksum!r}")
-        return MESSAGES_BY_COMMAND[decoded_command].unpack(payload, MESSAGES_BY_COMMAND[decoded_command].byte_order)
+        return (
+            MESSAGES_BY_COMMAND[decoded_command].unpack(payload, MESSAGES_BY_COMMAND[decoded_command].byte_order),
+            remainder
+        )
+
+    @classmethod
+    def deserialize(cls, data: bytes) -> "BitcoinMessage":
+        message, remainder = cls.deserialize_partial(data)
+        if remainder:
+            raise ValueError(f"Unexpected bytes trailing message: {remainder!r}")
+        return message
+
+    @classmethod
+    async def next_message(cls, reader: asyncio.StreamReader) -> Optional["BitcoinMessage"]:
+        header = await BitcoinMessageHeader.next_message(reader)
+        if header is None:
+            return None
+        payload = await reader.read(header.length)
+        if len(payload) != header.length:
+            raise ValueError(f"Expected {header.length} bytes when reading {cls.__name__}, but instead got {payload!r}")
+        return cls.deserialize(payload)
 
 
 class VarInt(int, serialization.AbstractPackable):
@@ -109,7 +149,24 @@ class VarInt(int, serialization.AbstractPackable):
         elif data[0] == 0xFF:
             return cls(serialization.UInt64.unpack(data[1:9], byte_order=byte_order)), data[9:]
         else:
-            raise ValueError(f"Unexpected data: {data!r}")
+            raise UnpackError(f"Unexpected data: {data!r}")
+
+    @classmethod
+    async def read(cls: Type[P], reader: asyncio.StreamReader, byte_order: ByteOrder = ByteOrder.NETWORK) -> P:
+        first_byte = await reader.read(1)
+        if len(first_byte) < 1:
+            raise BitcoinError()
+        elif first_byte[0] < 0xFD:
+            return cls(first_byte[0])
+        elif first_byte[0] == 0xFD:
+            data_type = serialization.UInt16
+        elif first_byte[0] == 0xFE:
+            data_type = serialization.UInt32
+        elif first_byte[0] == 0xFF:
+            data_type = serialization.UInt64
+        else:
+            raise BitcoinError()
+        return cls(await data_type.read(reader, byte_order=byte_order))
 
 
 class VarStr(bytes, serialization.AbstractPackable):
@@ -125,6 +182,14 @@ class VarStr(bytes, serialization.AbstractPackable):
         if len(remainder) < length:
             raise UnpackError(f"Expected a byte sequence of length {length} but instead got {remainder!r}")
         return remainder[:length], remainder[length:]
+
+    @classmethod
+    async def read(cls: Type[P], reader: asyncio.StreamReader, byte_order: ByteOrder = ByteOrder.NETWORK) -> P:
+        length = await VarInt.read(reader, byte_order=byte_order)
+        string = await reader.read(length)
+        if len(string) < length:
+            raise UnpackError(f"Expected a byte sequence of length {length} but instead got {string!r}")
+        return string
 
 
 class NetAddr(serialization.Struct):
@@ -150,9 +215,8 @@ class VerackMessage(BitcoinMessage):
     command = "verack"
 
 
-class VersionMessage(BitcoinMessage[VerackMessage]):
+class VersionMessage(BitcoinMessage):
     command = "version"
-    reply_type = VerackMessage
 
     version: serialization.Int32
     services: serialization.UInt64
@@ -168,10 +232,19 @@ class VersionMessage(BitcoinMessage[VerackMessage]):
 class BitcoinNode(Node):
     def __init__(self, address: Union[str, IPv4Address, IPv6Address], port: int = 8333):
         super().__init__(address, port)
+        self.connected: bool = False
+        self.connecting: bool = False
+
+    async def receive_message(self) -> Optional["BitcoinMessage"]:
+        return await BitcoinMessage.next_message(await self.reader)
 
     async def connect(self):
+        if self.connected or self.connecting:
+            return
+        await super().connect()
+        self.connecting = True
         t = int(current_time())
-        verack = await self.send_message(VersionMessage(
+        await self.send_message(VersionMessage(
             version=70015,
             services=0,
             timestamp=t,
@@ -182,7 +255,23 @@ class BitcoinNode(Node):
             start_height=0,
             relay=True
         ))
-        assert isinstance(verack, VerackMessage)
+        async for reply in self.run():
+            if isinstance(reply, VerackMessage):
+                self.connected = True
+                break
+        if not self.connected:
+            raise BitcoinError(f"Did not receive a Verack message from client {self.address}:{self.port}")
+        self.connecting = False
+
+    async def run(self) -> AsyncIterator["BitcoinMessage"]:
+        async with self:
+            await self.connect()
+            while True:
+                message = await self.receive_message()
+                if message is None:
+                    break
+                print(f"{self.address}:{self.port} {message}")
+                yield message
 
 
 class Bitcoin(Blockchain[BitcoinNode]):

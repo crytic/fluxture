@@ -1,3 +1,4 @@
+import asyncio
 import ipaddress
 import itertools
 from abc import ABCMeta, ABC, abstractmethod
@@ -38,6 +39,10 @@ class Packable(Protocol):
     def unpack_partial(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> Tuple[P, bytes]:
         ...
 
+    @classmethod
+    async def read(cls: Type[P], reader: asyncio.StreamReader, byte_order: ByteOrder = ByteOrder.NETWORK) -> P:
+        ...
+
 
 class BigEndian:
     def __class_getitem__(cls, item: Type[Packable]):
@@ -50,10 +55,14 @@ class BigEndian:
         def big_endian_unpack_partial(data: bytes, byte_order: ByteOrder = ByteOrder.BIG):
             return item.unpack_partial(data, byte_order=ByteOrder.BIG)
 
+        async def big_endian_read(reader: asyncio.StreamReader, byte_order: ByteOrder = ByteOrder.BIG):
+            return item.read(reader, byte_order=ByteOrder.BIG)
+
         return type(f"{item.__name__}BigEndian", (item,), {
             "pack": big_endian_pack,
             "unpack": big_endian_unpack,
-            "unpack_partial": big_endian_unpack_partial
+            "unpack_partial": big_endian_unpack_partial,
+            "read": big_endian_read
         })
 
 
@@ -68,10 +77,14 @@ class LittleEndian:
         def little_endian_unpack_partial(data: bytes, byte_order: ByteOrder = ByteOrder.LITTLE):
             return item.unpack_partial(data, byte_order=ByteOrder.LITTLE)
 
+        async def little_endian_read(reader: asyncio.StreamReader, byte_order: ByteOrder = ByteOrder.LITTLE):
+            return item.read(reader, byte_order=ByteOrder.LITTLE)
+
         return type(f"{item.__name__}LittleEndian", (item,), {
             "pack": little_endian_pack,
             "unpack": little_endian_unpack,
-            "unpack_partial": little_endian_unpack_partial
+            "unpack_partial": little_endian_unpack_partial,
+            "read": little_endian_read
         })
 
 
@@ -92,8 +105,20 @@ class AbstractPackable(ABC):
             raise ValueError(f"Unexpected trailing bytes: {remaining!r}")
         return ret
 
+    @classmethod
+    @abstractmethod
+    async def read(cls: Type[P], reader: asyncio.StreamReader, byte_order: ByteOrder = ByteOrder.NETWORK) -> P:
+        raise NotImplementedError()
+
+
+@runtime_checkable
+class FixedSize(Protocol):
+    num_bytes: int
+
 
 class IPv6Address(ipaddress.IPv6Address, AbstractPackable):
+    num_bytes: int = 16
+
     def __init__(self, address: Union[str, bytes, ipaddress.IPv6Address, ipaddress.IPv4Address]):
         if isinstance(address, str) or isinstance(address, bytes):
             address = ipaddress.ip_address(address)
@@ -118,6 +143,10 @@ class IPv6Address(ipaddress.IPv6Address, AbstractPackable):
             return cls(data[:16]), data[16:]
         else:
             return cls(bytes(reversed(data[:16]))), data[16:]
+
+    @classmethod
+    async def read(cls: Type[P], reader: asyncio.StreamReader, byte_order: ByteOrder = ByteOrder.NETWORK) -> P:
+        return cls.unpack(await reader.readexactly(cls.num_bytes), byte_order=byte_order)
 
 
 class SizeMeta(type):
@@ -198,6 +227,11 @@ class SizedByteArray(bytes, Sized):
     def unpack_partial(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> Tuple[P, bytes]:
         return cls(data[:cls.num_bytes]), data[cls.num_bytes:]
 
+    @classmethod
+    async def read(cls: Type[P], reader: asyncio.StreamReader, byte_order: ByteOrder = ByteOrder.NETWORK) -> P:
+        data = await reader.read(cls.num_bytes)
+        return cls.unpack(data, byte_order)
+
 
 class SizedIntegerMeta(ABCMeta):
     FORMAT: str
@@ -217,6 +251,10 @@ class SizedIntegerMeta(ABCMeta):
             setattr(cls, "SIGNED", cls.FORMAT.islower())
             setattr(cls, "MAX_VALUE", 2**(cls.BITS - [0, 1][cls.SIGNED]) - 1)
             setattr(cls, "MIN_VALUE", [0, -2**(cls.BITS - 1)][cls.SIGNED])
+
+    @property
+    def num_bytes(cls) -> int:
+        return cls.BYTES
 
     @property
     def c_type(cls) -> str:
@@ -244,6 +282,11 @@ class SizedInteger(int, metaclass=SizedIntegerMeta):
         except struct.error:
             pass
         raise UnpackError(f"Error unpacking {cls.__name__} from the front of {data!r}")
+
+    @classmethod
+    async def read(cls: Type[P], reader: asyncio.StreamReader, byte_order: ByteOrder = ByteOrder.NETWORK) -> P:
+        data = await reader.read(cls.num_bytes)
+        return cls.unpack(data, byte_order)
 
     def __str__(self):
         return f"{self.__class__.c_type}({super().__str__()})"
@@ -320,6 +363,10 @@ class StructMeta(ABCMeta):
                     raise TypeError(f"Field {field_name} of {name} must be Packable, not {field_type}")
         super().__init__(name, bases, clsdict)
         setattr(cls, "FIELDS", fields)
+        # are all fields fixed size? if so, we are fixed size, too!
+        if all(hasattr(field, "num_bytes") for field in fields.values()):
+            cls.num_bytes = sum(field.num_bytes for field in fields.values())  # type: ignore
+            assert isinstance(cls, FixedSize)
 
 
 class Struct(metaclass=StructMeta):
@@ -367,6 +414,27 @@ class Struct(metaclass=StructMeta):
                                   f"{parsed_fields}")
             args.append(field)
         return cls(*args), remaining_data
+
+    @classmethod
+    async def read(cls: Type[P], reader: asyncio.StreamReader, byte_order: ByteOrder = ByteOrder.NETWORK) -> P:
+        if hasattr(cls, "num_bytes"):
+            data = await reader.read(cls.num_bytes)
+            return cls.unpack(data, byte_order)
+        # we need to read it one field at a time
+        args = []
+        for field_name, field_type in cls.FIELDS.items():
+            try:
+                field = field_type.read(reader, byte_order)
+                errored = False
+            except UnpackError:
+                errored = True
+            if errored:
+                parsed_fields = [f"{field_name} = {arg!r}" for field_name, arg in zip(cls.FIELDS.keys(), args)]
+                parsed_fields = ", ".join(parsed_fields)
+                raise UnpackError(f"Error parsing field {cls.__name__}.{field_name} (field {len(args) + 1}) of type "
+                                  f"{field_type.__name__}. Prior parsed field values: {parsed_fields}")
+            args.append(field)
+        return cls(*args)
 
     def __contains__(self, field_name: str):
         return field_name in self.__class__.FIELDS

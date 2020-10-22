@@ -1,16 +1,15 @@
+import asyncio
 from abc import ABC, abstractmethod
-from typing import Generic, Type, TypeVar
+from typing import Optional, TypeVar
 
 from .serialization import ByteOrder, Struct
 
 
 M = TypeVar("M", bound="Message")
-R = TypeVar("R", bound="Message")
+B = TypeVar("B", bound="BinaryMessage")
 
 
-class Message(Generic[R], ABC):
-    reply_type: Type[R]
-
+class Message(ABC):
     @abstractmethod
     def serialize(self) -> bytes:
         raise NotImplementedError()
@@ -20,11 +19,13 @@ class Message(Generic[R], ABC):
     def deserialize(cls: M, data: bytes) -> M:
         raise NotImplementedError()
 
-    def process_reply(self, data: bytes) -> R:
-        return self.reply_type.deserialize(data)
+    @classmethod
+    @abstractmethod
+    async def next_message(cls: M, reader: asyncio.StreamReader) -> Optional[M]:
+        raise NotImplementedError()
 
 
-class BinaryMessage(Generic[R], Message[R], Struct, ABC):
+class BinaryMessage(Struct, Message):
     non_serialized = "byte_order",
     byte_order: ByteOrder = ByteOrder.NETWORK
 
@@ -32,5 +33,9 @@ class BinaryMessage(Generic[R], Message[R], Struct, ABC):
         return self.pack(self.byte_order)
 
     @classmethod
-    def deserialize(cls: M, data: bytes) -> M:
+    def deserialize(cls: B, data: bytes) -> B:
         return cls.unpack(data, cls.byte_order)
+
+    @classmethod
+    async def next_message(cls: B, reader: asyncio.StreamReader) -> Optional[B]:
+        return cls.read(reader, cls.byte_order)
