@@ -2,7 +2,7 @@ import asyncio
 import socket
 from abc import ABCMeta, abstractmethod
 from ipaddress import ip_address, IPv4Address, IPv6Address
-from typing import FrozenSet, Generic, Optional, Tuple, TypeVar, Union
+from typing import AsyncIterator, FrozenSet, Generic, Optional, Tuple, TypeVar, Union
 
 from .messaging import Message
 
@@ -16,7 +16,7 @@ def get_public_ip() -> Union[IPv4Address, IPv6Address]:
         s.close()
 
 
-class Node:
+class Node(metaclass=ABCMeta):
     def __init__(self, address: Union[str, IPv4Address, IPv6Address], port: int):
         if isinstance(address, str):
             self.address: Union[IPv4Address, IPv6Address] = ip_address(socket.gethostbyname(address))
@@ -28,6 +28,19 @@ class Node:
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
         self._entries: int = 0
+        self._stop: Optional[asyncio.Event] = None
+
+    @property
+    def is_running(self) -> bool:
+        return self._reader is not None and self._stop is not None and not self._stop.is_set()
+
+    def terminate(self):
+        if self._stop is not None:
+            self._stop.set()
+
+    async def join(self):
+        if self._stop is not None:
+            await self._stop.wait()
 
     @property
     async def reader(self) -> asyncio.StreamReader:
@@ -44,6 +57,10 @@ class Node:
     async def connect(self):
         if self._reader is None:
             self._reader, self._writer = await asyncio.open_connection(str(self.address), self.port)
+            if self._stop is None:
+                self._stop = asyncio.Event()
+            elif self._stop.is_set():
+                self._stop.clear()
 
     async def close(self):
         if self._writer is not None:
@@ -51,6 +68,8 @@ class Node:
             await self._writer.wait_closed()
             self._reader = None
             self._writer = None
+            if not self._stop.is_set():
+                self._stop.set()
 
     async def __aenter__(self):
         self._entries += 1
@@ -75,6 +94,10 @@ class Node:
 
     def __repr__(self):
         return f"{self.__class__.__name__}(address={self.address!r}, port={self.port!r})"
+
+    @abstractmethod
+    async def run(self) -> AsyncIterator[Message]:
+        raise NotImplementedError()
 
 
 N = TypeVar('N', bound=Node)

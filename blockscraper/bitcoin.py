@@ -1,10 +1,9 @@
 import asyncio
-import socket
 from abc import ABC
 from hashlib import sha256
 from ipaddress import IPv4Address, IPv6Address
 from time import time as current_time
-from typing import AsyncIterator, Dict, FrozenSet, Optional, Tuple, Type, TypeVar, Union
+from typing import AsyncIterator, Dict, FrozenSet, List, Optional, Tuple, Type, TypeVar, Union
 
 from .blockchain import Blockchain, get_public_ip, Node
 from .messaging import BinaryMessage
@@ -118,7 +117,9 @@ class BitcoinMessage(BinaryMessage, ABC):
         payload = await reader.read(header.length)
         if len(payload) != header.length:
             raise ValueError(f"Expected {header.length} bytes when reading {cls.__name__}, but instead got {payload!r}")
-        return cls.deserialize(payload)
+        msg, remainder = cls.deserialize_partial(payload, header=header)
+        assert len(remainder) == 0
+        return msg
 
 
 class VarInt(int, serialization.AbstractPackable):
@@ -211,6 +212,22 @@ class NetAddr(serialization.Struct):
         super().__init__(services=services, ip=ip, port=port)
 
 
+class NetIP(serialization.Struct):
+    time: serialization.UInt32
+    addr: NetAddr
+
+    def __init__(
+            self,
+            time: Optional[int] = None,
+            addr: Optional[NetAddr] = None
+    ):
+        if time is None:
+            time = int(current_time())
+        if addr is None:
+            addr = NetAddr()
+        super().__init__(time=time, addr=addr)
+
+
 class VerackMessage(BitcoinMessage):
     command = "verack"
 
@@ -227,6 +244,38 @@ class VersionMessage(BitcoinMessage):
     user_agent: VarStr
     start_height: serialization.Int32
     relay: serialization.Bool
+
+
+class GetAddrMessage(BitcoinMessage):
+    command = "getaddr"
+
+
+class AddressList(list, List[NetIP], serialization.AbstractPackable):
+    def __new__(cls, *args, **kwargs):
+        return list.__new__(cls, *args, **kwargs)
+
+    def pack(self, byte_order: ByteOrder = ByteOrder.NETWORK) -> bytes:
+        return VarInt(len(self)).pack(byte_order) + b"".join(ip.pack(byte_order) for ip in self)
+
+    @classmethod
+    def unpack_partial(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> Tuple[P, bytes]:
+        length, remainder = VarInt.unpack_partial(data, byte_order)
+        num_bytes = length * NetIP.num_bytes
+        if num_bytes > len(remainder):
+            raise UnpackError(f"Expected {num_bytes} bytes, but got {remainder!r}")
+        iters = [iter(remainder[:num_bytes])] * NetIP.num_bytes
+        return cls(NetIP.unpack(data, byte_order=byte_order) for data in zip(*iters)), remainder[num_bytes:]
+
+    @classmethod
+    async def read(cls: Type[P], reader: asyncio.StreamReader, byte_order: ByteOrder = ByteOrder.NETWORK) -> P:
+        length = await VarInt.read(reader, byte_order)
+        return cls(NetIP.read(reader, byte_order=byte_order) for _ in range(length))
+
+
+class AddrMessage(BitcoinMessage):
+    command = "addr"
+
+    addresses: AddressList
 
 
 class BitcoinNode(Node):
@@ -263,31 +312,54 @@ class BitcoinNode(Node):
             raise BitcoinError(f"Did not receive a Verack message from client {self.address}:{self.port}")
         self.connecting = False
 
+    async def get_neighbors(self) -> AddrMessage:
+        async with self:
+            await self.send_message(GetAddrMessage())
+            async for msg in self.run():
+                if isinstance(msg, AddrMessage):
+                    return msg
+        raise BitcoinError(f"Node {self.address}:{self.port} closed the connection before replying to our "
+                           "GetAddr message")
+
     async def run(self) -> AsyncIterator["BitcoinMessage"]:
         async with self:
             await self.connect()
             while True:
-                message = await self.receive_message()
+                done, pending = await asyncio.wait(
+                    [self.join(), self.receive_message()],
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                gather = asyncio.gather(*pending)
+                gather.cancel()
+                try:
+                    await gather
+                except asyncio.CancelledError:
+                    pass
+                message = done.pop().result()
                 if message is None:
                     break
-                print(f"{self.address}:{self.port} {message}")
-                yield message
+                elif self.is_running:
+                    print(f"{self.address}:{self.port} {message}")
+                    yield message
 
 
 class Bitcoin(Blockchain[BitcoinNode]):
     DEFAULT_SEEDS = (
-        BitcoinNode("dnsseed.bitcoin.dashjr.org"),
-        BitcoinNode("dnsseed.bluematt.me"),
-        BitcoinNode("seed.bitcoin.jonasschnelli.ch"),
+        #BitcoinNode("dnsseed.bitcoin.dashjr.org"),
+        #BitcoinNode("dnsseed.bluematt.me"),
+        #BitcoinNode("seed.bitcoin.jonasschnelli.ch"),
         BitcoinNode("seed.bitcoin.sipa.be"),
-        BitcoinNode("seed.bitcoinstats.com"),
-        BitcoinNode("seed.btc.petertodd.org")
+        #BitcoinNode("seed.bitcoinstats.com"),
+        #BitcoinNode("seed.btc.petertodd.org")
     )
 
     async def get_neighbors(self, node: BitcoinNode) -> FrozenSet[BitcoinNode]:
-        loop = asyncio.get_running_loop()
-
-        return frozenset(
-            BitcoinNode(addr[4][0])
-            for addr in await loop.getaddrinfo(str(node.address), node.port, proto=socket.IPPROTO_TCP)
-        )
+        assert node.is_running
+        neighbor_addrs = await node.get_neighbors()
+        return frozenset(BitcoinNode(addr.addr.ip, addr.addr.port) for addr in neighbor_addrs.addresses)
+        # loop = asyncio.get_running_loop()
+        #
+        # return frozenset(
+        #     BitcoinNode(addr[4][0])
+        #     for addr in await loop.getaddrinfo(str(node.address), node.port, proto=socket.IPPROTO_TCP)
+        # )

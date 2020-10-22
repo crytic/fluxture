@@ -41,28 +41,35 @@ class Crawler(Generic[N], metaclass=ABCMeta):
     def __init__(self, blockchain: Blockchain[N], crawl: Crawl[N]):
         self.blockchain: Blockchain[N] = blockchain
         self.crawl: Crawl[N] = crawl
+        self.nodes: Dict[N, N] = {}
 
     async def _crawl_node(self, node: N, futures: List[Future]):
-        neighbors = await self.blockchain.get_neighbors(node)
-        for neighbor in neighbors:
-            await neighbor.connect()
-        self.crawl.set_neighbors(node, neighbors)
-        futures.extend([
-            ensure_future(self._crawl_node(neighbor, futures))
-            for neighbor in neighbors if neighbor not in self.crawl
-        ])
+        async with node:
+            neighbors = []
+            for neighbor in await self.blockchain.get_neighbors(node):
+                if neighbor in self.nodes:
+                    neighbors.append(self.nodes[neighbor])
+                else:
+                    neighbors.append(neighbor)
+                    futures.append(ensure_future(self._crawl_node(neighbor, futures)))
+            self.crawl.set_neighbors(node, frozenset(neighbors))
 
-    @staticmethod
-    async def _crawl(futures: List[Future]):
-        for future in futures:
-            await future
-
-    def do_crawl(self, seeds: Optional[Iterable[N]] = None):
+    async def _crawl(self, seeds: Optional[Iterable[N]] = None):
         if seeds is None:
             seeds = self.blockchain.DEFAULT_SEEDS
-        loop = asyncio.new_event_loop()
         futures: List[Future] = []
         futures.extend([
-            ensure_future(self._crawl_node(seed_node, futures), loop=loop) for seed_node in seeds
+            ensure_future(self._crawl_node(seed_node, futures)) for seed_node in seeds
         ])
-        loop.run_until_complete(Crawler._crawl(futures))
+        for future in futures:
+            try:
+                await future
+            except Exception as e:
+                print(e)
+        for node in self.nodes.values():
+            if node.is_running:
+                node.terminate()
+                await node.join()
+
+    def do_crawl(self, seeds: Optional[Iterable[N]] = None):
+        asyncio.run(self._crawl(seeds))
