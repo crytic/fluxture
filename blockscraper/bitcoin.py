@@ -1,4 +1,5 @@
 import asyncio
+import socket
 from abc import ABC
 from hashlib import sha256
 from ipaddress import IPv4Address, IPv6Address
@@ -232,6 +233,29 @@ class VerackMessage(BitcoinMessage):
     command = "verack"
 
 
+class SendHeaders(BitcoinMessage):
+    command = "sendheaders"
+
+
+class SendCmpct(BitcoinMessage):
+    command = "sendcmpct"
+
+    announce: serialization.Bool
+    version: serialization.UInt64
+
+
+class Ping(BitcoinMessage):
+    command = "ping"
+
+    nonce: serialization.UInt64
+
+
+class Pong(BitcoinMessage):
+    command = "pong"
+
+    nonce: serialization.UInt64
+
+
 class VersionMessage(BitcoinMessage):
     command = "version"
 
@@ -264,7 +288,7 @@ class AddressList(list, List[NetIP], serialization.AbstractPackable):
         if num_bytes > len(remainder):
             raise UnpackError(f"Expected {num_bytes} bytes, but got {remainder!r}")
         iters = [iter(remainder[:num_bytes])] * NetIP.num_bytes
-        return cls(NetIP.unpack(data, byte_order=byte_order) for data in zip(*iters)), remainder[num_bytes:]
+        return cls(NetIP.unpack(bytes(data), byte_order=byte_order) for data in zip(*iters)), remainder[num_bytes:]
 
     @classmethod
     async def read(cls: Type[P], reader: asyncio.StreamReader, byte_order: ByteOrder = ByteOrder.NETWORK) -> P:
@@ -339,27 +363,43 @@ class BitcoinNode(Node):
                 if message is None:
                     break
                 elif self.is_running:
-                    print(f"{self.address}:{self.port} {message}")
+                    # print(f"{self.address}:{self.port} {message}")
+                    if isinstance(message, VersionMessage):
+                        await self.send_message(VerackMessage())
+                    elif isinstance(message, Ping):
+                        await self.send_message(Pong(nonce=message.nonce))
                     yield message
 
 
+async def collect_addresses(url: str, port: int = 8333) -> Tuple[BitcoinNode, ...]:
+    return tuple(
+        BitcoinNode(addr[4][0])
+        for addr in await asyncio.get_running_loop().getaddrinfo(url, port, proto=socket.IPPROTO_TCP)
+    )
+
+
+async def collect_defaults(*args: Union[Tuple[str], Tuple[str, int]]) -> Tuple[BitcoinNode, ...]:
+    results = []
+    for result in await asyncio.gather(*(collect_addresses(*arg) for arg in args)):
+        results.extend(result)
+    return tuple(results)
+
+
 class Bitcoin(Blockchain[BitcoinNode]):
-    DEFAULT_SEEDS = (
-        #BitcoinNode("dnsseed.bitcoin.dashjr.org"),
+    DEFAULT_SEEDS = asyncio.run(collect_defaults(
+        ("dnsseed.bitcoin.dashjr.org",),
         #BitcoinNode("dnsseed.bluematt.me"),
         #BitcoinNode("seed.bitcoin.jonasschnelli.ch"),
-        BitcoinNode("seed.bitcoin.sipa.be"),
+        ("seed.bitcoin.sipa.be",),
         #BitcoinNode("seed.bitcoinstats.com"),
         #BitcoinNode("seed.btc.petertodd.org")
-    )
+    ))
 
     async def get_neighbors(self, node: BitcoinNode) -> FrozenSet[BitcoinNode]:
         assert node.is_running
         neighbor_addrs = await node.get_neighbors()
-        return frozenset(BitcoinNode(addr.addr.ip, addr.addr.port) for addr in neighbor_addrs.addresses)
-        # loop = asyncio.get_running_loop()
-        #
-        # return frozenset(
-        #     BitcoinNode(addr[4][0])
-        #     for addr in await loop.getaddrinfo(str(node.address), node.port, proto=socket.IPPROTO_TCP)
-        # )
+        return frozenset(
+            BitcoinNode(addr.addr.ip, addr.addr.port)
+            for addr in neighbor_addrs.addresses
+            if addr.addr.ip != node.address or addr.addr.port != node.port
+        )

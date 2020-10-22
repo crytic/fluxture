@@ -1,9 +1,9 @@
 import asyncio
 from abc import ABCMeta, abstractmethod
 from asyncio import ensure_future, Future
-from typing import Dict, Generic, Iterable, List, Optional, TypeVar
+from typing import Dict, FrozenSet, Generic, Iterable, List, Optional, Tuple, TypeVar
 
-from .blockchain import Blockchain, FrozenSet, Node
+from .blockchain import Blockchain, Node
 
 N = TypeVar("N", bound=Node)
 
@@ -43,29 +43,37 @@ class Crawler(Generic[N], metaclass=ABCMeta):
         self.crawl: Crawl[N] = crawl
         self.nodes: Dict[N, N] = {}
 
-    async def _crawl_node(self, node: N, futures: List[Future]):
+    async def _crawl_node(self, node: N) -> FrozenSet[N]:
         async with node:
             neighbors = []
+            new_neighbors = set()
             for neighbor in await self.blockchain.get_neighbors(node):
                 if neighbor in self.nodes:
                     neighbors.append(self.nodes[neighbor])
                 else:
+                    self.nodes[neighbor] = neighbor
                     neighbors.append(neighbor)
-                    futures.append(ensure_future(self._crawl_node(neighbor, futures)))
+                    new_neighbors.add(neighbor)
             self.crawl.set_neighbors(node, frozenset(neighbors))
+            return frozenset(new_neighbors)
 
     async def _crawl(self, seeds: Optional[Iterable[N]] = None):
         if seeds is None:
             seeds = self.blockchain.DEFAULT_SEEDS
-        futures: List[Future] = []
-        futures.extend([
-            ensure_future(self._crawl_node(seed_node, futures)) for seed_node in seeds
-        ])
-        for future in futures:
-            try:
-                await future
-            except Exception as e:
-                print(e)
+        futures: List[Future] = [
+            ensure_future(self._crawl_node(seed_node)) for seed_node in seeds
+        ]
+        while futures:
+            print(f"Discovered {len(self.nodes)} nodes; waiting to crawl {len(futures)}...")
+            waiting_on = futures
+            done, pending = await asyncio.wait(waiting_on, return_when=asyncio.FIRST_COMPLETED)
+            futures = list(pending)
+            for result in await asyncio.gather(*done):
+                if isinstance(result, Exception):
+                    print(result.__traceback__)
+                    print(result)
+                else:
+                    futures.extend(ensure_future(self._crawl_node(node)) for node in result)
         for node in self.nodes.values():
             if node.is_running:
                 node.terminate()

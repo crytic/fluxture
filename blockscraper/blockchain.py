@@ -5,6 +5,7 @@ from ipaddress import ip_address, IPv4Address, IPv6Address
 from typing import AsyncIterator, FrozenSet, Generic, Optional, Tuple, TypeVar, Union
 
 from .messaging import Message
+from . import serialization
 
 
 def get_public_ip() -> Union[IPv4Address, IPv6Address]:
@@ -17,13 +18,11 @@ def get_public_ip() -> Union[IPv4Address, IPv6Address]:
 
 
 class Node(metaclass=ABCMeta):
-    def __init__(self, address: Union[str, IPv4Address, IPv6Address], port: int):
-        if isinstance(address, str):
-            self.address: Union[IPv4Address, IPv6Address] = ip_address(socket.gethostbyname(address))
-        elif isinstance(address, IPv4Address) or isinstance(address, IPv6Address):
-            self.address = address
+    def __init__(self, address: Union[str, bytes, IPv4Address, IPv6Address], port: int):
+        if not isinstance(address, IPv6Address):
+            self.address: IPv6Address = serialization.IPv6Address(address)
         else:
-            raise ValueError(f"Invalid node address: {address}")
+            self.address = address
         self.port: int = port
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
@@ -104,7 +103,7 @@ N = TypeVar('N', bound=Node)
 
 
 class Blockchain(Generic[N], metaclass=ABCMeta):
-    DEFAULT_SEEDS: Tuple[N] = ()
+    DEFAULT_SEEDS: Tuple[N, ...] = ()
 
     @abstractmethod
     async def get_neighbors(self, node: N) -> FrozenSet[N]:
