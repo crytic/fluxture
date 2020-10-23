@@ -270,6 +270,12 @@ class VersionMessage(BitcoinMessage):
     relay: serialization.Bool
 
 
+class FeeFilter(BitcoinMessage):
+    command = "feefilter"
+
+    feerate: serialization.UInt64
+
+
 class GetAddrMessage(BitcoinMessage):
     command = "getaddr"
 
