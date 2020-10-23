@@ -68,7 +68,7 @@ class Crawler(Generic[N], metaclass=ABCMeta):
             waiting_on = futures
             done, pending = await asyncio.wait(waiting_on, return_when=asyncio.FIRST_COMPLETED)
             futures = list(pending)
-            for result in await asyncio.gather(*done):
+            for result in await asyncio.gather(*done, return_exceptions=True):
                 if isinstance(result, Exception):
                     print(result.__traceback__)
                     print(result)
