@@ -4,7 +4,7 @@ from abc import ABC
 from hashlib import sha256
 from ipaddress import IPv4Address, IPv6Address
 from time import time as current_time
-from typing import AsyncIterator, Dict, FrozenSet, List, Optional, Tuple, Type, TypeVar, Union
+from typing import AsyncIterator, Dict, FrozenSet, Generic, List, Optional, Tuple, Type, TypeVar, Union
 
 from .blockchain import Blockchain, get_public_ip, Node
 from .messaging import BinaryMessage
@@ -45,6 +45,10 @@ class BitcoinMessageHeader(BinaryMessage):
         if not data:
             return None
         return cls.deserialize(data)
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(magic={self.magic!r}, command={self.decoded_command!r}, "\
+               f"length={self.length!r}, checksum={self.checksum!r})"
 
 
 MESSAGES_BY_COMMAND: Dict[str, Type["BitcoinMessage"]] = {}
@@ -115,9 +119,10 @@ class BitcoinMessage(BinaryMessage, ABC):
         header = await BitcoinMessageHeader.next_message(reader)
         if header is None:
             return None
-        payload = await reader.read(header.length)
-        if len(payload) != header.length:
-            raise ValueError(f"Expected {header.length} bytes when reading {cls.__name__}, but instead got {payload!r}")
+        try:
+            payload = await reader.readexactly(header.length)
+        except asyncio.IncompleteReadError:
+            raise ValueError(f"Expected {header.length} bytes when reading the message with header {header!r}")
         msg, remainder = cls.deserialize_partial(payload, header=header)
         assert len(remainder) == 0
         return msg
@@ -280,26 +285,59 @@ class GetAddrMessage(BitcoinMessage):
     command = "getaddr"
 
 
-class AddressList(list, List[NetIP], serialization.AbstractPackable):
+class AbstractList(list, Generic[P], List[P], serialization.AbstractPackable, ABC):
+    ELEMENT_TYPE: Type[P]
+
     def __new__(cls, *args, **kwargs):
         return list.__new__(cls, *args, **kwargs)
 
     def pack(self, byte_order: ByteOrder = ByteOrder.NETWORK) -> bytes:
-        return VarInt(len(self)).pack(byte_order) + b"".join(ip.pack(byte_order) for ip in self)
+        return VarInt(len(self)).pack(byte_order) + b"".join(element.pack(byte_order) for element in self)
 
     @classmethod
     def unpack_partial(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> Tuple[P, bytes]:
         length, remainder = VarInt.unpack_partial(data, byte_order)
-        num_bytes = length * NetIP.num_bytes
+        num_bytes = length * cls.ELEMENT_TYPE.num_bytes
         if num_bytes > len(remainder):
             raise UnpackError(f"Expected {num_bytes} bytes, but got {remainder!r}")
-        iters = [iter(remainder[:num_bytes])] * NetIP.num_bytes
-        return cls(NetIP.unpack(bytes(data), byte_order=byte_order) for data in zip(*iters)), remainder[num_bytes:]
+        iters = [iter(remainder[:num_bytes])] * cls.ELEMENT_TYPE.num_bytes
+        return cls(
+            cls.ELEMENT_TYPE.unpack(bytes(data), byte_order=byte_order) for data in zip(*iters)
+        ), remainder[num_bytes:]
 
     @classmethod
     async def read(cls: Type[P], reader: asyncio.StreamReader, byte_order: ByteOrder = ByteOrder.NETWORK) -> P:
         length = await VarInt.read(reader, byte_order)
-        return cls(NetIP.read(reader, byte_order=byte_order) for _ in range(length))
+        return cls(cls.ELEMENT_TYPE.read(reader, byte_order=byte_order) for _ in range(length))
+
+
+class AddressList(AbstractList[NetIP]):
+    ELEMENT_TYPE = NetIP
+
+
+class Identifier(serialization.UInt32):
+    MSG_TX = serialization.UInt32(1)
+    MSG_BLOCK = serialization.UInt32(2)
+    MSG_FILTERED_BLOCK = serialization.UInt32(3)
+    MSG_CMPCT_BLOCK = serialization.UInt32(4)
+    MSG_WITNESS_TX = serialization.UInt32((1 << 30) | 1)
+    MSG_WITNESS_BLOCK = serialization.UInt32((1 << 30) | 2)
+    MSG_FILTERED_WITNESS_BLOCK = serialization.UInt32((1 << 30) | 3)
+
+
+class Inventory(serialization.Struct):
+    identifier: Identifier
+    hash: serialization.SizedByteArray[32]
+
+
+class Inventories(AbstractList[Inventory]):
+    ELEMENT_TYPE = Inventory
+
+
+class InvMessage(BitcoinMessage):
+    command = "inv"
+
+    inventories: Inventories
 
 
 class AddrMessage(BitcoinMessage):
