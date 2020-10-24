@@ -2,8 +2,8 @@ import time
 from ipaddress import ip_address
 from unittest import TestCase
 
-from blockscraper.bitcoin import BitcoinMessage, NetAddr, VersionMessage
-from blockscraper.serialization import ByteOrder
+from fluxture.bitcoin import BitcoinMessage, NetAddr, VersionMessage
+from fluxture.serialization import ByteOrder
 
 EXAMPLE_VERSION_MESSAGE = b"".join([
     b"\x72\x11\x01\x00",                  # Protocol version: 70002

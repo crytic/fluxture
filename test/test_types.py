@@ -4,7 +4,7 @@ from tqdm import tqdm, trange
 from typing import List
 from unittest import TestCase
 
-from blockscraper.serialization import *
+from fluxture.serialization import *
 
 
 class TestTypes(TestCase):

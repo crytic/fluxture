@@ -2,9 +2,9 @@ from setuptools import setup, find_packages
 
 
 setup(
-    name='blockscraper',
-    description='A scraper for blockchains',
-    url='https://github.com/trailofbits/blockscraper',
+    name='fluxture',
+    description='A crawling framework for blockchains and peer-to-peer systems',
+    url='https://github.com/trailofbits/fluxture',
     author='Trail of Bits',
     version='0.0.1',
     packages=find_packages(exclude=['test']),
@@ -14,7 +14,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'blockscraper = blockscraper.__main__:main'
+            'fluxture = fluxture.__main__:main'
         ]
     },
     classifiers=[
