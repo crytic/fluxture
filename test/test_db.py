@@ -1,11 +1,11 @@
 from unittest import TestCase
 
 
-from fluxture.db import Database, default, Model, primary_key, unique
+from fluxture.db import Database, default, Model, primary_key
 
 
 class Person(Model):
-    name: str
+    name: primary_key(str)
     age: int
 
 
@@ -30,3 +30,26 @@ class TestDatabase(TestCase):
         db = TestDB()
         person_table = db[Person]
         self.assertEqual(len(person_table), 0)
+
+    def test_primary_key(self):
+        self.assertEqual(Person.primary_key_name, "name")
+
+        def invalid_table():
+            class InvalidTable(Model):
+                not_primary_key: int
+
+            InvalidTable(1)
+
+        self.assertRaises(TypeError, invalid_table)
+
+    def test_default(self):
+        class Number(Model):
+            n: default(primary_key(int), 1)
+
+        class TestDB(Database):
+            numbers: Number
+
+        db = TestDB()
+        numbers_table = db[Number]
+        numbers_table.append(Number())
+        self.assertEqual(next(iter(numbers_table)), Number(1))

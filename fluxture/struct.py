@@ -43,7 +43,14 @@ class Struct(Generic[F], metaclass=StructMeta[F]):
         if len(args) > len(unsatisfied_fields):
             raise ValueError(f"Unexpected positional argument: {args[len(unsatisfied_fields)]}")
         elif len(args) < len(unsatisfied_fields):
-            raise ValueError(f"Missing argument for {unsatisfied_fields[0]} in {self.__class__}")
+            # see if any of the unsatisfied fields have defaults:
+            for name in unsatisfied_fields[len(args):]:
+                field_type = self.__class__.FIELDS[name]
+                if hasattr(field_type, "default"):
+                    kwargs[name] = field_type.default
+                else:
+                    raise ValueError(f"Missing argument for {name} in {self.__class__}")
+            unsatisfied_fields = unsatisfied_fields[:len(args)]
         for name, value in itertools.chain(kwargs.items(), zip(unsatisfied_fields, args)):
             if isinstance(value, self.__class__.FIELDS[name]):
                 # the value was already passed as the correct type

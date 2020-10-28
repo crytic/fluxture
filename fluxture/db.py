@@ -4,10 +4,9 @@ from typing import Any, cast, Dict, Generic, Iterable, Iterator, List, Optional,
 from .serialization import Packable
 from fluxture.struct import Struct, StructMeta
 
-COLUMN_TYPES: List[Type[Any]] = [int, str, bytes, float, Packable]
-FieldType = Union[bool, int, float, str, bytes, Packable]
+FieldType = Union[bool, int, float, str, bytes, Packable, "Model"]
 
-T = TypeVar("T", bound=Packable)
+T = TypeVar("T", bound=FieldType)
 
 
 def _col_modifier(ty: Type[T], key_name: str, value: FieldType = True) -> Type[T]:
@@ -33,9 +32,16 @@ def default(ty: Type[T], default_value: FieldType) -> Type[T]:
     return _col_modifier(ty, "default", default_value)
 
 
+COLUMN_TYPES: List[Type[Any]] = [int, str, bytes, float, Packable, Struct]
+
+
 class Model(Struct[FieldType]):
+    non_serialized = "primary_key_name",
+    primary_key_name: Optional[str] = None
+
     @classmethod
     def validate_fields(cls, fields: OrderedDict[str, Type[FieldType]]):
+        primary_name = None
         for field_name, field_type in fields.items():
             for valid_type in COLUMN_TYPES:
                 if issubclass(field_type, valid_type):
@@ -43,12 +49,25 @@ class Model(Struct[FieldType]):
             else:
                 raise TypeError(f"Database field {field_name} of {cls.__name__} is type {field_type!r}, but "
                                 f"must be one of {COLUMN_TYPES!r}")
+            if hasattr(field_type, "primary_key") and field_type.primary_key:
+                if primary_name is not None:
+                    raise TypeError(f"A model can have at most one primary key, but both {primary_name} and "
+                                    f"{field_name} were specified in {cls.__name__}")
+                primary_name = field_name
+        if fields:
+            if primary_name is None:
+                raise TypeError(f"Table {cls.__name__} does not specify a primary key")
+        cls.primary_key_name = primary_name
 
     def save(self, db: "Database"):
         db[self.__class__].append(self)
 
     def to_row(self) -> Iterator[FieldType]:
         return iter((getattr(self, f) for f in self.keys()))
+
+
+# Redefine COLUMN_TYPES to include "Model"
+COLUMN_TYPES: List[Type[Any]] = [int, str, bytes, float, Packable, Model]
 
 
 class DatabaseConnection:
