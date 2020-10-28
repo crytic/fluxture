@@ -20,6 +20,8 @@ class TestDatabase(TestCase):
         retrieved_person = next(iter(table))
         self.assertIsInstance(retrieved_person, Person)
         self.assertEqual(retrieved_person, person)
+        self.assertEqual(next(iter(table.select(age=1337))), person)
+        self.assertCountEqual(table.select(age=0), ())
 
     def test_define_db(self):
         class TestDB(Database):

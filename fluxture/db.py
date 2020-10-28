@@ -44,6 +44,9 @@ class Model(Struct[FieldType]):
                 raise TypeError(f"Database field {field_name} of {cls.__name__} is type {field_type!r}, but "
                                 f"must be one of {COLUMN_TYPES!r}")
 
+    def save(self, db: "Database"):
+        db[self.__class__].append(self)
+
     def to_row(self) -> Iterator[FieldType]:
         return iter((getattr(self, f) for f in self.keys()))
 
@@ -113,10 +116,41 @@ class Table(Generic[M]):
         self.name: str = model_type.__name__
 
     def __iter__(self) -> Iterator[M]:
+        yield from self.select()
+
+    def select(
+            self,
+            distinct: bool = False,
+            limit: Optional[int] = None,
+            order_by: Optional[str] = None,
+            **kwargs
+    ) -> Iterator[M]:
+        params = []
+        where_clauses = []
+        for col_name, value in kwargs.items():
+            where_clauses.append(f"{col_name}=?")
+            params.append(value)
+        if where_clauses:
+            clauses = [f"WHERE {' AND '.join(where_clauses)}"]
+        else:
+            clauses = []
+        if order_by is not None:
+            clauses.append(" ORDER BY ?")
+            params.append(order_by)
+        if limit is not None:
+            clauses.append(" LIMIT ?")
+            params.append(limit)
+        clauses = "".join(clauses)
+        if clauses:
+            clauses = " " + clauses
+        if distinct:
+            distinct_clause = " DISTINCT"
+        else:
+            distinct_clause = ""
         with self.db:
             cur = self.db.con.cursor()
             try:
-                for row in cur.execute(f"SELECT * from {self.name}"):
+                for row in cur.execute(f"SELECT{distinct_clause} * from {self.name}{clauses}", params):
                     yield self.model_type(*row)
             finally:
                 cur.close()
