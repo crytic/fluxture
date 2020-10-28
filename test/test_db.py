@@ -12,10 +12,19 @@ class Person(Model):
 class TestDatabase(TestCase):
     def test_create_table(self):
         db = Database()
-        db.create_table(Person)
+        table = db.create_table(Person)
+        self.assertEqual(len(table), 0)
+        person = Person(name="Foo", age=1337)
+        table.append(person)
+        self.assertEqual(len(table), 1)
+        retrieved_person = next(iter(table))
+        self.assertIsInstance(retrieved_person, Person)
+        self.assertEqual(retrieved_person, person)
 
     def test_define_db(self):
         class TestDB(Database):
             people: Person
 
-        _ = TestDB()
+        db = TestDB()
+        person_table = db[Person]
+        self.assertEqual(len(person_table), 0)

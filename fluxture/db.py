@@ -1,5 +1,5 @@
 import sqlite3
-from typing import Any, cast, List, Optional, OrderedDict, Type, TypeVar, Union
+from typing import Any, cast, Dict, Generic, Iterable, Iterator, List, Optional, OrderedDict, Type, TypeVar, Union
 
 from .serialization import Packable
 from fluxture.struct import Struct, StructMeta
@@ -44,6 +44,9 @@ class Model(Struct[FieldType]):
                 raise TypeError(f"Database field {field_name} of {cls.__name__} is type {field_type!r}, but "
                                 f"must be one of {COLUMN_TYPES!r}")
 
+    def to_row(self) -> Iterator[FieldType]:
+        return iter((getattr(self, f) for f in self.keys()))
+
 
 class DatabaseConnection:
     def __init__(self, *args, **kwargs):
@@ -51,6 +54,10 @@ class DatabaseConnection:
         self._kwargs = kwargs
         self._con: Optional[sqlite3.Connection] = None
         self._entries: int = 0
+        if ("database" in self._kwargs and self._kwargs["database"] == ":memory:") or \
+                (self._args and self._args[0] == ":memory:"):
+            # if using an in-memory database, always stay connected
+            self.__enter__()
 
     def cursor(self) -> sqlite3.Cursor:
         return self._con.cursor()
@@ -64,7 +71,7 @@ class DatabaseConnection:
     def execute(self, sql: str, *parameters: COLUMN_TYPES):
         params = []
         for p in parameters:
-            if issubclass(p, str) or issubclass(p, bytes) or issubclass(p, int) or issubclass(p, float):
+            if isinstance(p, str) or isinstance(p, bytes) or isinstance(p, int) or isinstance(p, float):
                 params.append(p)
             elif isinstance(p, Packable):
                 params.append(p.pack())
@@ -79,6 +86,12 @@ class DatabaseConnection:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        if exc_type is None:
+            # no exception occurred
+            self.commit()
+        else:
+            # an exception occurred
+            self.rollback()
         if self._entries <= 1 and self._con is not None:
             self._con.close()
             self._con = None
@@ -90,14 +103,62 @@ class DatabaseConnection:
         return getattr(self._con, item)
 
 
+M = TypeVar("M", bound=Model)
+
+
+class Table(Generic[M]):
+    def __init__(self, db: "Database", model_type: Type[M]):
+        self.db: Database = db
+        self.model_type: Type[M] = model_type
+        self.name: str = model_type.__name__
+
+    def __iter__(self) -> Iterator[M]:
+        with self.db:
+            cur = self.db.con.cursor()
+            try:
+                for row in cur.execute(f"SELECT * from {self.name}"):
+                    yield self.model_type(*row)
+            finally:
+                cur.close()
+
+    def __len__(self):
+        with self.db:
+            cur = self.db.con.cursor()
+            try:
+                result = cur.execute(f"SELECT COUNT(*) from {self.name}")
+                return result.fetchone()[0]
+            finally:
+                cur.close()
+
+    def append(self, row: M):
+        with self.db:
+            self.db.con.execute(f"INSERT INTO {self.name} ({','.join(row.FIELDS.keys())}) VALUES "
+                                f"({','.join(['?']*len(row.FIELDS))});", *row.to_row())
+
+    def extend(self, rows: Iterable[M]):
+        with self.db:
+            rows = list(rows)
+            if not rows:
+                return
+            row_data = [
+                tuple(row.to_row()) for row in rows
+            ]
+            first_row = rows[0]
+            self.db.con.executemany(f"INSERT INTO {self.name} ({','.join(first_row.FIELDS.keys())}) VALUES "
+                                    f"({','.join(['?']*len(first_row.FIELDS))});", row_data)
+
+
 class Database(metaclass=StructMeta[Model]):
     def __init__(self, path: str = ":memory:"):
         self.path: str = path
         self.con = DatabaseConnection(self.path)
         if self.FIELDS:
             with self:
-                for model in self.FIELDS.values():
-                    self.create_table(model)
+                self.tables: Dict[Type[Model], Table[Model]] = {
+                    model: self.create_table(model) for model in self.FIELDS.values()
+                }
+        else:
+            self.tables = {}
 
     @classmethod
     def validate_fields(cls, fields: OrderedDict[str, Type[FieldType]]):
@@ -106,20 +167,23 @@ class Database(metaclass=StructMeta[Model]):
                 raise TypeError(f"Database table {field_name} of {cls.__name__} is type {field_type!r}, but "
                                 "must be a subclass of `db.Model`")
 
+    def __getitem__(self, table_type: Type[M]) -> Table[M]:
+        return self.tables[table_type]
+
+    def __contains__(self, table_type: Type[M]):
+        return table_type in self.tables
+
+    def __len__(self):
+        return len(self.tables)
+
     def __enter__(self) -> "Database":
         self.con.__enter__()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_type is None:
-            # no exception occurred
-            self.con.commit()
-        else:
-            # an exception occurred
-            self.con.rollback()
         self.con.__exit__(exc_type, exc_val, exc_tb)
 
-    def create_table(self, model_type: Type[Model]):
+    def create_table(self, model_type: Type[Model]) -> Table[Model]:
         columns = []
         for field_name, field_type in model_type.FIELDS.items():
             if issubclass(field_type, int):
@@ -146,8 +210,9 @@ class Database(metaclass=StructMeta[Model]):
                 else:
                     modifiers.append(f" DEFAULT {field_type.default}")
             columns.append(f"{field_name} {data_type}{''.join(modifiers)}")
-        column_constraints = "\n    ".join(columns)
+        column_constraints = ",\n    ".join(columns)
         if len(columns) > 1:
             column_constraints = "\n    " + column_constraints + "\n"
         with self:
             self.con.execute(f"CREATE TABLE IF NOT EXISTS {model_type.__name__} ({column_constraints});")
+        return Table(self, model_type)
