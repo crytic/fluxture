@@ -2,8 +2,8 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Optional, TypeVar
 
-from .serialization import ByteOrder, Struct
-
+from .serialization import ByteOrder
+from fluxture.struct import PackableStruct
 
 M = TypeVar("M", bound="Message")
 B = TypeVar("B", bound="BinaryMessage")
@@ -25,7 +25,7 @@ class Message(ABC):
         raise NotImplementedError()
 
 
-class BinaryMessage(Struct, Message):
+class BinaryMessage(PackableStruct, Message):
     non_serialized = "byte_order",
     byte_order: ByteOrder = ByteOrder.NETWORK
 

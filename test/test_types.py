@@ -1,5 +1,7 @@
 import inspect
 import random
+
+from fluxture.struct import PackableStruct
 from tqdm import tqdm, trange
 from typing import List
 from unittest import TestCase
@@ -28,18 +30,18 @@ class TestTypes(TestCase):
                 self.assertEqual(int_type.unpack(packed), value)
 
     def test_empty_struct(self):
-        class EmptyStruct(Struct):
+        class EmptyStruct(PackableStruct):
             pass
         s = EmptyStruct()
         self.assertEqual(s, EmptyStruct.unpack(s.pack()))
 
     def test_struct_comparison(self):
-        class S1(Struct):
+        class S1(PackableStruct):
             a: Int32
             b: UnsignedChar
             c: UInt64
 
-        class S2(Struct):
+        class S2(PackableStruct):
             a: Int32
             b: UnsignedChar
             c: UInt64
@@ -50,7 +52,7 @@ class TestTypes(TestCase):
         self.assertNotEqual(S1(0, 1, 2), S2(0, 1, 3))
 
     def test_struct_packing(self):
-        class S3(Struct):
+        class S3(PackableStruct):
             a: Int32
             b: UInt64
             c: Int16
@@ -59,7 +61,7 @@ class TestTypes(TestCase):
         self.assertEqual(S3.unpack(s3.pack()), s3)
 
     def test_byte_arrays(self):
-        class HasArrays(Struct):
+        class HasArrays(PackableStruct):
             a: SizedByteArray[1024]
             b: SizedByteArray[0]
             c: SizedByteArray[10]
