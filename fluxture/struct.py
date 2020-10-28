@@ -78,7 +78,7 @@ class Struct(Generic[F], metaclass=StructMeta[F]):
         return ValuesView(self)
 
     def __eq__(self, other):
-        return isinstance(other, PackableStruct) and len(self) == len(other) and all(
+        return isinstance(other, Struct) and len(self) == len(other) and all(
             a == b for (_, a), (_, b) in zip(self.items(), other.items())
         )
 
