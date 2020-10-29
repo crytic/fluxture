@@ -4,11 +4,30 @@ from typing import (
 )
 
 from .serialization import Packable
-from fluxture.struct import Struct, StructMeta
+from .struct import Struct, StructMeta
 
 FieldType = Union[bool, int, float, str, bytes, Packable, "ForeignKey"]
 
 T = TypeVar("T", bound=FieldType)
+
+
+class AutoIncrement(int):
+    initialized: bool = False
+
+    def __new__(cls, *args):
+        if args and (len(args) > 1 or not isinstance(args[0], AutoIncrement) or args[0].initialized):
+            retval = int.__new__(cls, *args)
+            setattr(retval, "initialized", True)
+        else:
+            retval = int.__new__(cls, 0)
+            setattr(retval, "initialized", False)
+        return retval
+
+    def __repr__(self):
+        if self.initialized:
+            return f"{self.__class__.__name__}({int(self)})"
+        else:
+            return f"{self.__class__.__name__}()"
 
 
 class ColumnOptions:
@@ -25,6 +44,8 @@ class ColumnOptions:
         self.not_null: Optional[bool] = not_null
         self.default: Optional[FieldType] = default
         self.auto_increment: Optional[bool] = auto_increment
+        if self.auto_increment and not self.default:
+            self.default = AutoIncrement()
 
     def is_set(self, option_name: str):
         a = getattr(self, option_name)
@@ -54,7 +75,7 @@ class ColumnOptions:
         return "".join(
             [
                 f"{''.join(key.capitalize() for key in key_name.split('_'))}"
-                f"{''.join(val.capitalize() for val in str(value).split(' '))}"
+                f"{''.join(val.capitalize() for val in str(value).replace('(', '').replace(')', '').split(' '))}"
                 for key_name, value in self.items()
             ]
         )
@@ -69,7 +90,7 @@ class ColumnOptions:
             modifiers.append("UNIQUE")
         if self.not_null:
             modifiers.append("NOT NULL")
-        if self.default is not None:
+        if self.default is not None and not isinstance(self.default, AutoIncrement):
             modifiers.append(f"DEFAULT {self.default}")
         return " ".join(modifiers)
 
@@ -82,7 +103,7 @@ def column_options(
         ty: Type[T],
         options: ColumnOptions
 ) -> Type[T]:
-    if hasattr(ty, "column_options"):
+    if hasattr(ty, "column_options") and ty.column_options is not None:
         options = ty.column_options | options
         type_suffix = (options - ty.column_options).type_suffix()
     else:
@@ -147,11 +168,22 @@ class Model(Struct[FieldType]):
                     raise TypeError(f"Table {cls.__name__} does not specify a primary key")
         cls.primary_key_name = primary_name
 
+    def uninitialized_auto_increments(self) -> Iterator[Tuple[str, AutoIncrement]]:
+        for key in self.keys():
+            value = getattr(self, key)
+            if isinstance(value, AutoIncrement) and not value.initialized:
+                yield key, value
+
     def save(self, db: "Database"):
         db[self.__class__].append(self)
 
     def to_row(self) -> Iterator[FieldType]:
-        return iter((getattr(self, f) for f in self.keys()))
+        for key in self.keys():
+            value = getattr(self, key)
+            if isinstance(value, AutoIncrement) and not value.initialized:
+                yield None
+            else:
+                yield getattr(self, key)
 
 
 M = TypeVar("M", bound=Model)
@@ -180,7 +212,9 @@ class DatabaseConnection:
     def execute(self, sql: str, *parameters: COLUMN_TYPES):
         params = []
         for p in parameters:
-            if isinstance(p, str) or isinstance(p, bytes) or isinstance(p, int) or isinstance(p, float):
+            if p is None:
+                params.append(None)
+            elif isinstance(p, str) or isinstance(p, bytes) or isinstance(p, int) or isinstance(p, float):
                 params.append(p)
             elif isinstance(p, ForeignKey):
                 params.append(p.key)
@@ -188,7 +222,10 @@ class DatabaseConnection:
                 params.append(p.pack())
             else:
                 raise ValueError(f"Unsupported parameter type: {p!r}")
-        self._con.execute(sql, params)
+        try:
+            self._con.execute(sql, params)
+        except sqlite3.Error:
+            raise ValueError(f"Error executing SQL: {sql!r} with parameters {params!r}")
 
     def __enter__(self) -> "DatabaseConnection":
         if self._entries == 0 and self._con is None:
@@ -236,8 +273,9 @@ class Table(Generic[M]):
         params = []
         where_clauses = []
         for col_name, value in kwargs.items():
-            where_clauses.append(f"{col_name}=?")
-            params.append(value)
+            if not isinstance(value, AutoIncrement) or value.initialized:
+                where_clauses.append(f"{col_name}=?")
+                params.append(value)
         if where_clauses:
             clauses = [f"WHERE {' AND '.join(where_clauses)}"]
         else:
@@ -276,10 +314,21 @@ class Table(Generic[M]):
             finally:
                 cur.close()
 
+    def _resolve_auto_increments(self, row: M):
+        to_update = [key for key, _ in row.uninitialized_auto_increments()]
+        if to_update:
+            try:
+                obj_in_db = next(iter(self.select(**{row.primary_key_name: getattr(row, row.primary_key_name)})))
+            except StopIteration:
+                raise ValueError(f"Row {row} was expected to be in the database in table {self.name}, but was not")
+            for key in to_update:
+                setattr(row, key, getattr(obj_in_db, key))
+
     def append(self, row: M):
         with self.db:
-            self.db.con.execute(f"INSERT INTO {self.name} ({','.join(row.FIELDS.keys())}) VALUES "
-                                f"({','.join(['?']*len(row.FIELDS))});", *row.to_row())
+            self.db.con.execute(f"INSERT INTO {self.name} ({','.join(self.model_type.FIELDS.keys())}) VALUES "
+                                f"({','.join(['?']*len(self.model_type.FIELDS))});", *row.to_row())
+            self._resolve_auto_increments(row)
 
     def extend(self, rows: Iterable[M]):
         with self.db:
@@ -289,9 +338,10 @@ class Table(Generic[M]):
             row_data = [
                 tuple(row.to_row()) for row in rows
             ]
-            first_row = rows[0]
-            self.db.con.executemany(f"INSERT INTO {self.name} ({','.join(first_row.FIELDS.keys())}) VALUES "
-                                    f"({','.join(['?']*len(first_row.FIELDS))});", row_data)
+            self.db.con.executemany(f"INSERT INTO {self.name} ({','.join(self.model_type.FIELDS.keys())}) VALUES "
+                                    f"({','.join(['?']*len(self.model_type.FIELDS))});", row_data)
+            for row in rows:
+                self._resolve_auto_increments(row)
 
 
 class ForeignKey(Generic[M]):

@@ -1,7 +1,7 @@
 from unittest import TestCase
 
 
-from fluxture.db import Database, default, ForeignKey, Model, primary_key
+from fluxture.db import AutoIncrement, column_options, ColumnOptions, Database, default, ForeignKey, Model, primary_key
 
 
 class Person(Model):
@@ -70,3 +70,18 @@ class TestDatabase(TestCase):
         db[Height].append(Height(person="Foo", height=80))
         h = next(iter(db[Height]))
         self.assertEqual(h.person, person)
+
+    def test_auto_increment(self):
+        class Counter(Model):
+            id: column_options(AutoIncrement, ColumnOptions(primary_key=True, auto_increment=True))
+
+        class TestDB(Database):
+            counters: Counter
+
+        db = TestDB()
+        counter = Counter()
+        self.assertIsInstance(counter.id, AutoIncrement)
+        self.assertEqual(counter.id.initialized, False)
+        self.assertTrue(any(key == "id" for key, _ in counter.uninitialized_auto_increments()))
+        db[Counter].append(counter)
+        self.assertEqual(counter.id.initialized, True)

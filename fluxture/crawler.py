@@ -6,8 +6,28 @@ from collections import deque
 from typing import Deque, Dict, FrozenSet, Generic, Iterable, List, Optional, Sized, TypeVar
 
 from .blockchain import Blockchain, Node
+from .db import Database, ForeignKey, Model, primary_key
+from .serialization import DateTime, IPv6Address
 
 N = TypeVar("N", bound=Node)
+
+
+class Geolocation(Model):
+    id:
+    ip: IPv6Address
+    timestamp: DateTime
+
+
+class CrawledNode(Model):
+    ip: primary_key(IPv6Address)
+    port: int
+
+
+class CrawlEvent(Model):
+    node: ForeignKey[CrawledNode]
+    timestamp: DateTime
+    event: str
+    description: str
 
 
 class Crawl(Generic[N], Sized):
@@ -22,6 +42,11 @@ class Crawl(Generic[N], Sized):
     @abstractmethod
     def set_neighbors(self, node: N, neighbors: FrozenSet[N]):
         raise NotImplementedError()
+
+
+class DatabaseCrawl(Generic[N], Crawl[N], Database):
+    nodes: CrawledNode
+    events: CrawlEvent
 
 
 class InMemoryCrawl(Generic[N], Crawl[N]):
