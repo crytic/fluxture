@@ -1,7 +1,7 @@
 from unittest import TestCase
 
 
-from fluxture.db import Database, default, Model, primary_key
+from fluxture.db import Database, default, ForeignKey, Model, primary_key
 
 
 class Person(Model):
@@ -53,3 +53,19 @@ class TestDatabase(TestCase):
         numbers_table = db[Number]
         numbers_table.append(Number())
         self.assertEqual(next(iter(numbers_table)), Number(1))
+
+    def test_foreign_key(self):
+        class Height(Model):
+            person: primary_key(ForeignKey[Person])
+            height: int
+
+        class TestDB(Database):
+            people: Person
+            heights: Height
+
+        db = TestDB()
+        person = Person(name="Foo", age=1337)
+        db[Person].append(person)
+        db[Height].append(Height(person="Foo", height=80))
+        h = next(iter(db[Height]))
+        self.assertEqual(h.person, person)

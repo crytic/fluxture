@@ -1,10 +1,12 @@
 import sqlite3
-from typing import Any, cast, Dict, Generic, Iterable, Iterator, List, Optional, OrderedDict, Type, TypeVar, Union
+from typing import (
+    Any, cast, Dict, Generic, Iterable, Iterator, List, Optional, OrderedDict, Tuple, Type, TypeVar, Union
+)
 
 from .serialization import Packable
 from fluxture.struct import Struct, StructMeta
 
-FieldType = Union[bool, int, float, str, bytes, Packable, "Model"]
+FieldType = Union[bool, int, float, str, bytes, Packable, "ForeignKey"]
 
 T = TypeVar("T", bound=FieldType)
 
@@ -32,7 +34,7 @@ def default(ty: Type[T], default_value: FieldType) -> Type[T]:
     return _col_modifier(ty, "default", default_value)
 
 
-COLUMN_TYPES: List[Type[Any]] = [int, str, bytes, float, Packable, Struct]
+COLUMN_TYPES: List[Type[Any]] = [int, str, bytes, float, Packable]
 
 
 class Model(Struct[FieldType]):
@@ -43,12 +45,13 @@ class Model(Struct[FieldType]):
     def validate_fields(cls, fields: OrderedDict[str, Type[FieldType]]):
         primary_name = None
         for field_name, field_type in fields.items():
-            for valid_type in COLUMN_TYPES:
-                if issubclass(field_type, valid_type):
-                    break
-            else:
-                raise TypeError(f"Database field {field_name} of {cls.__name__} is type {field_type!r}, but "
-                                f"must be one of {COLUMN_TYPES!r}")
+            if not issubclass(field_type, ForeignKey):
+                for valid_type in COLUMN_TYPES:
+                    if issubclass(field_type, valid_type):
+                        break
+                else:
+                    raise TypeError(f"Database field {field_name} of {cls.__name__} is type {field_type!r}, but "
+                                    f"must be one of {COLUMN_TYPES!r}")
             if hasattr(field_type, "primary_key") and field_type.primary_key:
                 if primary_name is not None:
                     raise TypeError(f"A model can have at most one primary key, but both {primary_name} and "
@@ -56,7 +59,12 @@ class Model(Struct[FieldType]):
                 primary_name = field_name
         if fields:
             if primary_name is None:
-                raise TypeError(f"Table {cls.__name__} does not specify a primary key")
+                if len(fields) == 1:
+                    # just make the sole field a primary key
+                    primary_name, field_type = next(iter(fields.items()))
+                    setattr(field_type, "primary_key", True)
+                else:
+                    raise TypeError(f"Table {cls.__name__} does not specify a primary key")
         cls.primary_key_name = primary_name
 
     def save(self, db: "Database"):
@@ -66,8 +74,7 @@ class Model(Struct[FieldType]):
         return iter((getattr(self, f) for f in self.keys()))
 
 
-# Redefine COLUMN_TYPES to include "Model"
-COLUMN_TYPES: List[Type[Any]] = [int, str, bytes, float, Packable, Model]
+M = TypeVar("M", bound=Model)
 
 
 class DatabaseConnection:
@@ -95,6 +102,8 @@ class DatabaseConnection:
         for p in parameters:
             if isinstance(p, str) or isinstance(p, bytes) or isinstance(p, int) or isinstance(p, float):
                 params.append(p)
+            elif isinstance(p, ForeignKey):
+                params.append(p.key)
             elif isinstance(p, Packable):
                 params.append(p.pack())
             else:
@@ -125,14 +134,14 @@ class DatabaseConnection:
         return getattr(self._con, item)
 
 
-M = TypeVar("M", bound=Model)
-
-
 class Table(Generic[M]):
     def __init__(self, db: "Database", model_type: Type[M]):
         self.db: Database = db
         self.model_type: Type[M] = model_type
         self.name: str = model_type.__name__
+        for field_type in self.model_type.FIELDS.values():
+            if isinstance(field_type, ForeignKey):
+                field_type.table = self
 
     def __iter__(self) -> Iterator[M]:
         yield from self.select()
@@ -170,7 +179,11 @@ class Table(Generic[M]):
             cur = self.db.con.cursor()
             try:
                 for row in cur.execute(f"SELECT{distinct_clause} * from {self.name}{clauses}", params):
-                    yield self.model_type(*row)
+                    r = self.model_type(*row)
+                    for field_name, field_type in self.model_type.FIELDS.items():
+                        if issubclass(field_type, ForeignKey):
+                            getattr(r, field_name).table = self
+                    yield r
             finally:
                 cur.close()
 
@@ -199,6 +212,82 @@ class Table(Generic[M]):
             first_row = rows[0]
             self.db.con.executemany(f"INSERT INTO {self.name} ({','.join(first_row.FIELDS.keys())}) VALUES "
                                     f"({','.join(['?']*len(first_row.FIELDS))});", row_data)
+
+
+class ForeignKey(Generic[M]):
+    row_type: Type[M]
+    foreign_col_name: str
+    table: Optional[Table[M]] = None
+
+    def __init__(self, key: Union[int, str, bytes, float], table: Optional[Table[M]] = None):
+        self.key: Union[int, str, bytes, float] = key
+        if table is not None:
+            self.table = table
+        self._row: Optional[M] = None
+
+    def __class_getitem__(cls, arguments: Union[TypeVar, Type[M], Tuple[Type[M], str], Table[M]]) -> "ForeignKey[M]":
+        if isinstance(arguments, TypeVar):
+            return cls
+        elif isinstance(arguments, tuple):
+            model, row_name = arguments
+        else:
+            if isinstance(arguments, Table):
+                if not hasattr(cls, "foreign_col_name") or not cls.foreign_col_name:
+                    raise ValueError("A table can only be passed to a ForeignKey that already has a `foreign_col_name`")
+                return cast(
+                    ForeignKey[M],
+                    type(f"{cls.__name__}{arguments.model_type.__name__.capitalize()}"
+                         f"{cls.foreign_col_name.replace('_', '').capitalize()}", (cls,),
+                         {
+                             "table": arguments
+                         })
+                )
+            model = arguments
+            row_name = model.primary_key_name
+        return cast(
+            ForeignKey[M],
+            type(f"{cls.__name__}{model.__name__.capitalize()}{row_name.replace('_', '').capitalize()}", (cls,), {
+                "row_type": model,
+                "foreign_col_name": row_name
+            })
+        )
+
+    @classmethod
+    def key_type(cls) -> Type[Union[int, float, str, bytes, Packable]]:
+        return cls.row_type.FIELDS[cls.foreign_col_name]
+
+    @property
+    def row(self) -> M:
+        if self._row is None:
+            if self.table is None:
+                raise ValueError(f"{self.__class__.__name__} must have a `table` set")
+            foreign_table = self.table.db[self.row_type]
+            self._row = next(iter(foreign_table.select(**{self.foreign_col_name: self.key})))
+        return self._row
+
+    def __getattr__(self, item):
+        return getattr(self.row, item)
+
+    def __eq__(self, other):
+        if isinstance(other, ForeignKey):
+            return self.key == other.key
+        else:
+            return self.row == other
+
+    def __ne__(self, other):
+        return not (self == other)
+
+    def __lt__(self, other):
+        if isinstance(other, ForeignKey):
+            return self.key < other.key
+        else:
+            return self.row < other
+
+    def __hash__(self):
+        return hash(self.key)
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(key={self.key!r})"
 
 
 class Database(metaclass=StructMeta[Model]):
@@ -239,6 +328,14 @@ class Database(metaclass=StructMeta[Model]):
     def create_table(self, model_type: Type[Model]) -> Table[Model]:
         columns = []
         for field_name, field_type in model_type.FIELDS.items():
+            if issubclass(field_type, ForeignKey):
+                old_field_type = field_type
+                field_type = field_type.key_type()
+                setattr(field_type, "primary_key", getattr(old_field_type, "primary_key", False))
+                if hasattr(old_field_type, "default"):
+                    setattr(field_type, "default", old_field_type.default)
+                setattr(field_type, "unique", getattr(old_field_type, "unique", False))
+                setattr(field_type, "not_null", getattr(old_field_type, "not_null", False))
             if issubclass(field_type, int):
                 data_type = "INTEGER"
             elif issubclass(field_type, float):
