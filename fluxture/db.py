@@ -11,27 +11,102 @@ FieldType = Union[bool, int, float, str, bytes, Packable, "ForeignKey"]
 T = TypeVar("T", bound=FieldType)
 
 
-def _col_modifier(ty: Type[T], key_name: str, value: FieldType = True) -> Type[T]:
+class ColumnOptions:
+    def __init__(
+        self,
+        primary_key: Optional[bool] = None,
+        unique: Optional[bool] = None,
+        not_null: Optional[bool] = None,
+        default: Optional[FieldType] = None,
+        auto_increment: Optional[bool] = None,
+    ):
+        self.primary_key: Optional[bool] = primary_key
+        self.unique: Optional[bool] = unique
+        self.not_null: Optional[bool] = not_null
+        self.default: Optional[FieldType] = default
+        self.auto_increment: Optional[bool] = auto_increment
+
+    def is_set(self, option_name: str):
+        a = getattr(self, option_name)
+        return a is not None and not callable(a)
+
+    def set_options(self) -> Iterator[str]:
+        return iter(
+            key_name for key_name in dir(self) if not key_name.startswith("_") and self.is_set(key_name)
+        )
+
+    def items(self) -> Iterator[Tuple[str, Any]]:
+        return iter((key_name, getattr(self, key_name)) for key_name in self.set_options())
+
+    def __or__(self, other: "ColumnOptions") -> "ColumnOptions":
+        new_options = ColumnOptions(**dict(other.items()))
+        for key_name, value in self.items():
+            if not other.is_set(key_name):
+                setattr(new_options, key_name, value)
+        return new_options
+
+    def __sub__(self, other: "ColumnOptions") -> "ColumnOptions":
+        return ColumnOptions(**{
+            key_name: value for key_name, value in self.items() if not other.is_set(key_name)
+        })
+
+    def type_suffix(self) -> str:
+        return "".join(
+            [
+                f"{''.join(key.capitalize() for key in key_name.split('_'))}"
+                f"{''.join(val.capitalize() for val in str(value).split(' '))}"
+                for key_name, value in self.items()
+            ]
+        )
+
+    def sql_modifiers(self) -> str:
+        modifiers = []
+        if self.primary_key:
+            modifiers.append("PRIMARY KEY")
+        if self.auto_increment:
+            modifiers.append("AUTOINCREMENT")
+        if self.unique:
+            modifiers.append("UNIQUE")
+        if self.not_null:
+            modifiers.append("NOT NULL")
+        if self.default is not None:
+            modifiers.append(f"DEFAULT {self.default}")
+        return " ".join(modifiers)
+
+    def __repr__(self):
+        args = [f"{key}={value!r}" for key, value in self.items()]
+        return f"{self.__class__.__name__}({', '.join(args)})"
+
+
+def column_options(
+        ty: Type[T],
+        options: ColumnOptions
+) -> Type[T]:
+    if hasattr(ty, "column_options"):
+        options = ty.column_options | options
+        type_suffix = (options - ty.column_options).type_suffix()
+    else:
+        type_suffix = options.type_suffix()
     return cast(
         Type[T],
-        type(f"{ty.__name__}{''.join(key.capitalize() for key in key_name.split('_'))}", (ty,), {key_name: value})
+        type(f"{ty.__name__}{type_suffix}", (ty,), {"column_options": options})
     )
 
 
 def primary_key(ty: Type[T]) -> Type[T]:
-    return _col_modifier(ty, "primary_key")
+    return column_options(ty, ColumnOptions(primary_key=True))
 
 
 def unique(ty: Type[T]) -> Type[T]:
-    return _col_modifier(ty, "unique")
+    return column_options(ty, ColumnOptions(unique=True))
 
 
 def not_null(ty: Type[T]) -> Type[T]:
-    return _col_modifier(ty, "not_null")
+    return column_options(ty, ColumnOptions(not_null=True))
 
 
 def default(ty: Type[T], default_value: FieldType) -> Type[T]:
-    return _col_modifier(ty, "default", default_value)
+    return column_options(ty, ColumnOptions(default=default_value))
 
 
 COLUMN_TYPES: List[Type[Any]] = [int, str, bytes, float, Packable]
@@ -40,6 +115,11 @@ COLUMN_TYPES: List[Type[Any]] = [int, str, bytes, float, Packable]
 class Model(Struct[FieldType]):
     non_serialized = "primary_key_name",
     primary_key_name: Optional[str] = None
+
+    @staticmethod
+    def is_primary_key(cls) -> bool:
+        return hasattr(cls, "column_options") and cls.column_options is not None \
+               and cls.column_options.primary_key
 
     @classmethod
     def validate_fields(cls, fields: OrderedDict[str, Type[FieldType]]):
@@ -52,7 +132,7 @@ class Model(Struct[FieldType]):
                 else:
                     raise TypeError(f"Database field {field_name} of {cls.__name__} is type {field_type!r}, but "
                                     f"must be one of {COLUMN_TYPES!r}")
-            if hasattr(field_type, "primary_key") and field_type.primary_key:
+            if Model.is_primary_key(field_type):
                 if primary_name is not None:
                     raise TypeError(f"A model can have at most one primary key, but both {primary_name} and "
                                     f"{field_name} were specified in {cls.__name__}")
@@ -62,7 +142,7 @@ class Model(Struct[FieldType]):
                 if len(fields) == 1:
                     # just make the sole field a primary key
                     primary_name, field_type = next(iter(fields.items()))
-                    setattr(field_type, "primary_key", True)
+                    fields[primary_name] = primary_key(field_type)
                 else:
                     raise TypeError(f"Table {cls.__name__} does not specify a primary key")
         cls.primary_key_name = primary_name
@@ -254,7 +334,15 @@ class ForeignKey(Generic[M]):
 
     @classmethod
     def key_type(cls) -> Type[Union[int, float, str, bytes, Packable]]:
-        return cls.row_type.FIELDS[cls.foreign_col_name]
+        foreign_type = cls.row_type.FIELDS[cls.foreign_col_name]
+        if hasattr(cls, "column_options"):
+            options = {"column_options": cls.column_options}
+        else:
+            options = {}
+        return cast(
+            Type[Union[int, float, str, bytes, Packable]],
+            type(f"{foreign_type.__name__}ForeignKey", (foreign_type,), options)
+        )
 
     @property
     def row(self) -> M:
@@ -331,11 +419,8 @@ class Database(metaclass=StructMeta[Model]):
             if issubclass(field_type, ForeignKey):
                 old_field_type = field_type
                 field_type = field_type.key_type()
-                setattr(field_type, "primary_key", getattr(old_field_type, "primary_key", False))
-                if hasattr(old_field_type, "default"):
-                    setattr(field_type, "default", old_field_type.default)
-                setattr(field_type, "unique", getattr(old_field_type, "unique", False))
-                setattr(field_type, "not_null", getattr(old_field_type, "not_null", False))
+                if hasattr(old_field_type, "column_options"):
+                    setattr(field_type, "column_options", old_field_type.column_options)
             if issubclass(field_type, int):
                 data_type = "INTEGER"
             elif issubclass(field_type, float):
@@ -347,19 +432,13 @@ class Database(metaclass=StructMeta[Model]):
             else:
                 raise TypeError(f"Column {field_name} is of unsupported type {field_type!r}; it must be one of "
                                 f"{COLUMN_TYPES}")
-            modifiers = []
-            if hasattr(field_type, "primary_key") and field_type.primary_key:
-                modifiers.append(" PRIMARY KEY")
-            if hasattr(field_type, "unique") and field_type.unique:
-                modifiers.append(" UNIQUE")
-            if hasattr(field_type, "not_null") and field_type.not_null:
-                modifiers.append(" NOT NULL")
-            if hasattr(field_type, "default"):
-                if field_type.default is None:
-                    modifiers.append(" DEFAULT NULL")
-                else:
-                    modifiers.append(f" DEFAULT {field_type.default}")
-            columns.append(f"{field_name} {data_type}{''.join(modifiers)}")
+            if hasattr(field_type, "column_options"):
+                modifiers = field_type.column_options.sql_modifiers()
+                if modifiers:
+                    modifiers = f" {modifiers}"
+            else:
+                modifiers = ""
+            columns.append(f"{field_name} {data_type}{modifiers}")
         column_constraints = ",\n    ".join(columns)
         if len(columns) > 1:
             column_constraints = "\n    " + column_constraints + "\n"

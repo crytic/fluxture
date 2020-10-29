@@ -1,12 +1,14 @@
 import asyncio
+import datetime
 import ipaddress
+import struct
+import time
 from abc import ABCMeta, ABC, abstractmethod
 from enum import Enum
 from typing import (
     Tuple, Type, TypeVar, Union
 )
 from typing_extensions import Protocol, runtime_checkable
-import struct
 
 
 P = TypeVar("P")
@@ -338,3 +340,21 @@ Int32 = Long
 UInt32 = UnsignedLong
 Int64 = LongLong
 UInt64 = UnsignedLongLong
+
+
+class DateTime(UInt64):
+    def __new__(cls, *args):
+        if not args:
+            return UInt64.__new__(cls, int(time.time()))
+        else:
+            return UInt64.__new__(cls, *args)
+
+    @property
+    def date(self) -> datetime.datetime:
+        return datetime.datetime.fromtimestamp(float(self))
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}({int(self)})"
+
+    def __str__(self):
+        return self.date.isoformat()

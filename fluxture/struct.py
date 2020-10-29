@@ -46,8 +46,8 @@ class Struct(Generic[F], metaclass=StructMeta[F]):
             # see if any of the unsatisfied fields have defaults:
             for name in unsatisfied_fields[len(args):]:
                 field_type = self.__class__.FIELDS[name]
-                if hasattr(field_type, "default"):
-                    kwargs[name] = field_type.default
+                if hasattr(field_type, "column_options") and field_type.column_options.default is not None:
+                    kwargs[name] = field_type.column_options.default
                 else:
                     raise ValueError(f"Missing argument for {name} in {self.__class__}")
             unsatisfied_fields = unsatisfied_fields[:len(args)]

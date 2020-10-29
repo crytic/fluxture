@@ -37,6 +37,7 @@ class TestDatabase(TestCase):
         def invalid_table():
             class InvalidTable(Model):
                 not_primary_key: int
+                not_primary_key_either: float
 
             InvalidTable(1)
 
