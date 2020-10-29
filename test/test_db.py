@@ -34,14 +34,11 @@ class TestDatabase(TestCase):
     def test_primary_key(self):
         self.assertEqual(Person.primary_key_name, "name")
 
-        def invalid_table():
-            class InvalidTable(Model):
-                not_primary_key: int
-                not_primary_key_either: float
+        class NoPrimaryKey(Model):
+            not_primary_key: int
+            not_primary_key_either: float
 
-            InvalidTable(1)
-
-        self.assertRaises(TypeError, invalid_table)
+        self.assertEqual(NoPrimaryKey.primary_key_name, "rowid")
 
     def test_default(self):
         class Number(Model):

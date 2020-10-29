@@ -135,7 +135,7 @@ COLUMN_TYPES: List[Type[Any]] = [int, str, bytes, float, Packable]
 
 class Model(Struct[FieldType]):
     non_serialized = "primary_key_name",
-    primary_key_name: Optional[str] = None
+    primary_key_name: str = "rowid"
 
     @staticmethod
     def is_primary_key(cls) -> bool:
@@ -158,15 +158,8 @@ class Model(Struct[FieldType]):
                     raise TypeError(f"A model can have at most one primary key, but both {primary_name} and "
                                     f"{field_name} were specified in {cls.__name__}")
                 primary_name = field_name
-        if fields:
-            if primary_name is None:
-                if len(fields) == 1:
-                    # just make the sole field a primary key
-                    primary_name, field_type = next(iter(fields.items()))
-                    fields[primary_name] = primary_key(field_type)
-                else:
-                    raise TypeError(f"Table {cls.__name__} does not specify a primary key")
-        cls.primary_key_name = primary_name
+        if primary_name is not None:
+            cls.primary_key_name = primary_name
 
     def uninitialized_auto_increments(self) -> Iterator[Tuple[str, AutoIncrement]]:
         for key in self.keys():
