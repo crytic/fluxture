@@ -6,7 +6,7 @@ from ipaddress import IPv4Address, IPv6Address
 from time import time as current_time
 from typing import AsyncIterator, Dict, FrozenSet, Generic, List, Optional, Tuple, Type, TypeVar, Union
 
-import fluxture.struct
+import fluxture.structures
 
 from .blockchain import Blockchain, get_public_ip, Node
 from .messaging import BinaryMessage
@@ -201,7 +201,7 @@ class VarStr(bytes, serialization.AbstractPackable):
         return string
 
 
-class NetAddr(fluxture.struct.PackableStruct):
+class NetAddr(fluxture.structures.PackableStruct):
     services: serialization.UInt64
     ip: serialization.BigEndian[serialization.IPv6Address]
     port: serialization.BigEndian[serialization.UInt16]
@@ -220,7 +220,7 @@ class NetAddr(fluxture.struct.PackableStruct):
         super().__init__(services=services, ip=ip, port=port)
 
 
-class NetIP(fluxture.struct.PackableStruct):
+class NetIP(fluxture.structures.PackableStruct):
     time: serialization.UInt32
     addr: NetAddr
 
@@ -327,7 +327,7 @@ class Identifier(serialization.UInt32):
     MSG_FILTERED_WITNESS_BLOCK = serialization.UInt32((1 << 30) | 3)
 
 
-class Inventory(fluxture.struct.PackableStruct):
+class Inventory(fluxture.structures.PackableStruct):
     identifier: Identifier
     hash: serialization.SizedByteArray[32]
 

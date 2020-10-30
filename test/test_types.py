@@ -1,7 +1,7 @@
 import inspect
 import random
 
-from fluxture.struct import PackableStruct
+from fluxture.structures import PackableStruct
 from tqdm import tqdm, trange
 from typing import List
 from unittest import TestCase

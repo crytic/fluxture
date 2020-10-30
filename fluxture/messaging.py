@@ -3,7 +3,7 @@ from abc import ABC, abstractmethod
 from typing import Optional, TypeVar
 
 from .serialization import ByteOrder
-from fluxture.struct import PackableStruct
+from fluxture.structures import PackableStruct
 
 M = TypeVar("M", bound="Message")
 B = TypeVar("B", bound="BinaryMessage")
