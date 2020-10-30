@@ -133,9 +133,13 @@ def default(ty: Type[T], default_value: FieldType) -> Type[T]:
 COLUMN_TYPES: List[Type[Any]] = [int, str, bytes, float, Packable]
 
 
+S = TypeVar("S")
+
+
 class Model(Struct[FieldType]):
-    non_serialized = "primary_key_name",
+    non_serialized = "primary_key_name", "_db"
     primary_key_name: str = "rowid"
+    _db: Optional["Database"] = None
 
     @staticmethod
     def is_primary_key(cls) -> bool:
@@ -167,8 +171,26 @@ class Model(Struct[FieldType]):
             if isinstance(value, AutoIncrement) and not value.initialized:
                 yield key, value
 
-    def save(self, db: "Database"):
-        db[self.__class__].append(self)
+    @property
+    def db(self) -> "Database":
+        if self._db is None:
+            raise ValueError(f"Model {self!r} has not yet been added to a database")
+        return self._db
+
+    @db.setter
+    def db(self, db: "Database"):
+        if self._db is not None:
+            if self._db != db:
+                raise ValueError(f"Model {self!r} is already associated with a different database: {db!r}")
+        else:
+            self._db = db
+
+    @property
+    def table(self: S) -> "Table[S]":
+        return self.db[self.__class__]
+
+    def save(self):
+        self.table.append(self)
 
     def to_row(self) -> Iterator[FieldType]:
         for key in self.keys():
@@ -245,13 +267,22 @@ class DatabaseConnection:
 
 
 class Table(Generic[M]):
-    def __init__(self, db: "Database", model_type: Type[M]):
+    model_type: Optional[Type[M]] = None
+
+    def __init__(self, db: "Database"):
+        if self.model_type is None:
+            raise TypeError(f"A Table must be instantiated by subclassing it with a model: `Table[ModelType]`")
         self.db: Database = db
-        self.model_type: Type[M] = model_type
-        self.name: str = model_type.__name__
+        self.model_type: Type[M] = self.model_type
+        self.name: str = self.model_type.__name__
         for field_type in self.model_type.FIELDS.values():
             if isinstance(field_type, ForeignKey):
                 field_type.table = self
+
+    def __class_getitem__(cls, model_type: Type[M]) -> Type["Table[M]"]:
+        if isinstance(model_type, TypeVar):
+            return cls
+        return cast(Type[Table[M]], type(f"{cls.__name__}{model_type.__name__}", (cls,), {"model_type": model_type}))
 
     def __iter__(self) -> Iterator[M]:
         yield from self.select()
@@ -291,6 +322,7 @@ class Table(Generic[M]):
             try:
                 for row in cur.execute(f"SELECT{distinct_clause} * from {self.name}{clauses}", params):
                     r = self.model_type(*row)
+                    r.db = self.db
                     for field_name, field_type in self.model_type.FIELDS.items():
                         if issubclass(field_type, ForeignKey):
                             getattr(r, field_name).table = self
@@ -307,7 +339,7 @@ class Table(Generic[M]):
             finally:
                 cur.close()
 
-    def _resolve_auto_increments(self, row: M):
+    def _finalize_added_row(self, row: M):
         to_update = [key for key, _ in row.uninitialized_auto_increments()]
         if to_update:
             try:
@@ -316,12 +348,20 @@ class Table(Generic[M]):
                 raise ValueError(f"Row {row} was expected to be in the database in table {self.name}, but was not")
             for key in to_update:
                 setattr(row, key, getattr(obj_in_db, key))
+        row.db = self.db
 
     def append(self, row: M):
         with self.db:
+            try:
+                existing_db = row.db
+            except ValueError:
+                existing_db = None
+            if existing_db is not None and existing_db != self.db:
+                ValueError(f"Row {row!r} is already associated with database {existing_db!r} which is different than "
+                           f"table {self.name}'s database: {self.db!r}")
             self.db.con.execute(f"INSERT INTO {self.name} ({','.join(self.model_type.FIELDS.keys())}) VALUES "
                                 f"({','.join(['?']*len(self.model_type.FIELDS))});", *row.to_row())
-            self._resolve_auto_increments(row)
+            self._finalize_added_row(row)
 
     def extend(self, rows: Iterable[M]):
         with self.db:
@@ -334,11 +374,12 @@ class Table(Generic[M]):
             self.db.con.executemany(f"INSERT INTO {self.name} ({','.join(self.model_type.FIELDS.keys())}) VALUES "
                                     f"({','.join(['?']*len(self.model_type.FIELDS))});", row_data)
             for row in rows:
-                self._resolve_auto_increments(row)
+                self._finalize_added_row(row)
 
 
 class ForeignKey(Generic[M]):
     row_type: Type[M]
+    foreign_table_name: str
     foreign_col_name: str
     table: Optional[Table[M]] = None
 
@@ -348,30 +389,43 @@ class ForeignKey(Generic[M]):
             self.table = table
         self._row: Optional[M] = None
 
-    def __class_getitem__(cls, arguments: Union[TypeVar, Type[M], Tuple[Type[M], str], Table[M]]) -> "ForeignKey[M]":
+    def __class_getitem__(
+            cls,
+            arguments: Union[TypeVar, Tuple[str, Type[M]], Tuple[str, Type[M], str], Table[M]]
+    ) -> "ForeignKey[M]":
         if isinstance(arguments, TypeVar):
             return cls
-        elif isinstance(arguments, tuple):
-            model, row_name = arguments
+        elif isinstance(arguments, Table):
+            if not hasattr(cls, "foreign_table_name") or not cls.foreign_col_name:
+                raise ValueError("A table can only be passed to a ForeignKey that already has a `foreign_table_name`")
+            return cast(
+                ForeignKey[M],
+                type(f"{cls.__name__}{arguments.model_type.__name__.capitalize()}"
+                     f"{cls.foreign_col_name.replace('_', '').capitalize()}", (cls,),
+                     {
+                         "table": arguments
+                     })
+            )
         else:
-            if isinstance(arguments, Table):
-                if not hasattr(cls, "foreign_col_name") or not cls.foreign_col_name:
-                    raise ValueError("A table can only be passed to a ForeignKey that already has a `foreign_col_name`")
-                return cast(
-                    ForeignKey[M],
-                    type(f"{cls.__name__}{arguments.model_type.__name__.capitalize()}"
-                         f"{cls.foreign_col_name.replace('_', '').capitalize()}", (cls,),
-                         {
-                             "table": arguments
-                         })
-                )
-            model = arguments
-            row_name = model.primary_key_name
+            if not isinstance(arguments, tuple) or not (2 <= len(arguments) <= 3) or \
+                    not isinstance(arguments[0], str) or not issubclass(arguments[1], Model) or (
+                        len(arguments) == 3 and not isinstance(arguments[2], str)
+            ):
+                raise TypeError(f"Invalid ForeignKey arguments: {list(arguments)!r}. Expected either two or three "
+                                "arguments: (1) a string for the foreign table name; (2) the `Model` type for that "
+                                "table; and, optionally, (3) the foreign column name. If (3) is omitted, the primary "
+                                "key for the foreign table is used.")
+            if len(arguments) == 3:
+                table_name, model, row_name = arguments
+            else:
+                table_name, model = arguments
+                row_name = model.primary_key_name
         return cast(
             ForeignKey[M],
             type(f"{cls.__name__}{model.__name__.capitalize()}{row_name.replace('_', '').capitalize()}", (cls,), {
                 "row_type": model,
-                "foreign_col_name": row_name
+                "foreign_col_name": row_name,
+                "foreign_table_name": table_name
             })
         )
 
@@ -392,7 +446,7 @@ class ForeignKey(Generic[M]):
         if self._row is None:
             if self.table is None:
                 raise ValueError(f"{self.__class__.__name__} must have a `table` set")
-            foreign_table = self.table.db[self.row_type]
+            foreign_table = getattr(self.table.db, self.foreign_table_name)
             self._row = next(iter(foreign_table.select(**{self.foreign_col_name: self.key})))
         return self._row
 
@@ -427,27 +481,17 @@ class Database(metaclass=StructMeta[Model]):
         self.con = DatabaseConnection(self.path)
         if self.FIELDS:
             with self:
-                self.tables: Dict[Type[Model], Table[Model]] = {
-                    model: self.create_table(model) for model in self.FIELDS.values()
-                }
+                for table_name, table_type in self.FIELDS.items():
+                    setattr(self, table_name, self.create_table(table_type))
         else:
             self.tables = {}
 
     @classmethod
     def validate_fields(cls, fields: OrderedDict[str, Type[FieldType]]):
         for field_name, field_type in fields.items():
-            if not issubclass(field_type, Model):
-                raise TypeError(f"Database table {field_name} of {cls.__name__} is type {field_type!r}, but "
-                                "must be a subclass of `db.Model`")
-
-    def __getitem__(self, table_type: Type[M]) -> Table[M]:
-        return self.tables[table_type]
-
-    def __contains__(self, table_type: Type[M]):
-        return table_type in self.tables
-
-    def __len__(self):
-        return len(self.tables)
+            if not issubclass(field_type, Table):
+                raise TypeError(f"Database {cls!r} table `{field_name}` was expected to be of type `Table` but "
+                                f"was instead {field_type!r}")
 
     def __enter__(self) -> "Database":
         self.con.__enter__()
@@ -456,8 +500,10 @@ class Database(metaclass=StructMeta[Model]):
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.con.__exit__(exc_type, exc_val, exc_tb)
 
-    def create_table(self, model_type: Type[Model]) -> Table[Model]:
+    def create_table(self, table_type: Type[Table[M]]) -> Table[M]:
         columns = []
+        table = table_type(self)
+        model_type = table_type.model_type
         for field_name, field_type in model_type.FIELDS.items():
             if issubclass(field_type, ForeignKey):
                 old_field_type = field_type
@@ -487,4 +533,4 @@ class Database(metaclass=StructMeta[Model]):
             column_constraints = "\n    " + column_constraints + "\n"
         with self:
             self.con.execute(f"CREATE TABLE IF NOT EXISTS {model_type.__name__} ({column_constraints});")
-        return Table(self, model_type)
+        return table

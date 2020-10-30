@@ -1,7 +1,9 @@
 from unittest import TestCase
 
 
-from fluxture.db import AutoIncrement, column_options, ColumnOptions, Database, default, ForeignKey, Model, primary_key
+from fluxture.db import (
+    AutoIncrement, column_options, ColumnOptions, Database, default, ForeignKey, Model, primary_key, Table
+)
 
 
 class Person(Model):
@@ -12,7 +14,7 @@ class Person(Model):
 class TestDatabase(TestCase):
     def test_create_table(self):
         db = Database()
-        table = db.create_table(Person)
+        table = db.create_table(Table[Person])
         self.assertEqual(len(table), 0)
         person = Person(name="Foo", age=1337)
         table.append(person)
@@ -25,11 +27,10 @@ class TestDatabase(TestCase):
 
     def test_define_db(self):
         class TestDB(Database):
-            people: Person
+            people: Table[Person]
 
         db = TestDB()
-        person_table = db[Person]
-        self.assertEqual(len(person_table), 0)
+        self.assertEqual(len(db.people), 0)
 
     def test_primary_key(self):
         self.assertEqual(Person.primary_key_name, "name")
@@ -45,27 +46,26 @@ class TestDatabase(TestCase):
             n: default(primary_key(int), 1)
 
         class TestDB(Database):
-            numbers: Number
+            numbers: Table[Number]
 
         db = TestDB()
-        numbers_table = db[Number]
-        numbers_table.append(Number())
-        self.assertEqual(next(iter(numbers_table)), Number(1))
+        db.numbers.append(Number())
+        self.assertEqual(next(iter(db.numbers)), Number(1))
 
     def test_foreign_key(self):
         class Height(Model):
-            person: primary_key(ForeignKey[Person])
+            person: primary_key(ForeignKey["people", Person])
             height: int
 
         class TestDB(Database):
-            people: Person
-            heights: Height
+            people: Table[Person]
+            heights: Table[Height]
 
         db = TestDB()
         person = Person(name="Foo", age=1337)
-        db[Person].append(person)
-        db[Height].append(Height(person="Foo", height=80))
-        h = next(iter(db[Height]))
+        db.people.append(person)
+        db.heights.append(Height(person="Foo", height=80))
+        h = next(iter(db.heights))
         self.assertEqual(h.person, person)
 
     def test_auto_increment(self):
@@ -73,12 +73,12 @@ class TestDatabase(TestCase):
             id: column_options(AutoIncrement, ColumnOptions(primary_key=True, auto_increment=True))
 
         class TestDB(Database):
-            counters: Counter
+            counters: Table[Counter]
 
         db = TestDB()
         counter = Counter()
         self.assertIsInstance(counter.id, AutoIncrement)
         self.assertEqual(counter.id.initialized, False)
         self.assertTrue(any(key == "id" for key, _ in counter.uninitialized_auto_increments()))
-        db[Counter].append(counter)
+        db.counters.append(counter)
         self.assertEqual(counter.id.initialized, True)
