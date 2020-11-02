@@ -357,7 +357,7 @@ class Table(Generic[M]):
                 field_type.table = self
 
     def __class_getitem__(cls, model_type: Type[M]) -> Type["Table[M]"]:
-        if isinstance(model_type, TypeVar):
+        if isinstance(model_type, TypeVar) or isinstance(model_type, str):
             return cls
         return cast(Type[Table[M]], type(f"{cls.__name__}{model_type.__name__}", (cls,), {"model_type": model_type}))
 

@@ -1,15 +1,23 @@
+import argparse
 import tarfile
 import urllib.request
 from ipaddress import IPv6Address as PythonIPv6, IPv4Address as PythonIPv4
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Optional, Union
+from typing import Iterator, Optional, Union
 from typing_extensions import Protocol
 
 import geoip2.database
+from fastkml import kml
+from fastkml.geometry import Point
+from fastkml.styles import IconStyle, Style
 
-from .db import Model
+from .db import Database, Model, Table
+from .fluxture import Command
 from .serialization import DateTime, IPv6Address
+
+
+KML_NS = "{http://www.opengis.net/kml/2.2}"
 
 
 class Geolocation(Model):
@@ -18,6 +26,42 @@ class Geolocation(Model):
     lat: float
     lon: float
     timestamp: DateTime
+
+    def to_placemark(self) -> kml.Placemark:
+        icon = Style(KML_NS, styles=[IconStyle(KML_NS, id="ip")])
+        p = kml.Placemark(
+            KML_NS,
+            str(int(self.rowid)),
+            str(self.ip),
+            f"{self.ip!s}: {self.city} ({self.lat}°N, {self.lon}°E) @ {self.timestamp!s}"
+        )
+        p.append_style(icon)
+        p.geometry = Point(self.lon, self.lat)
+        return p
+
+    @classmethod
+    def placemarks(cls, table: Table["Geolocation"]) -> Iterator[kml.Placemark]:
+        for loc in table:
+            yield loc.to_placemark()
+
+
+def to_kml(
+        table: Table[Geolocation],
+        doc_id: str,
+        doc_name: str,
+        doc_description: str,
+        folder_id: str,
+        folder_name: str,
+        folder_description: str
+) -> kml.KML:
+    k = kml.KML()
+    d = kml.Document(KML_NS, doc_id, doc_name, doc_description)
+    k.append(d)
+    f = kml.Folder(KML_NS, folder_name, folder_id, folder_description)
+    d.append(f)
+    for p in Geolocation.placemarks(table):
+        f.append(p)
+    return k
 
 
 class Geolocator(Protocol):
@@ -95,3 +139,29 @@ class GeoIP2Locator:
                 lon=city.location.longitude,
                 timestamp=DateTime()
             )
+
+
+class ToKML(Command):
+    name = "kml"
+    help = "export a KML file visualizing the crawled data"
+
+    def __init_arguments__(self):
+        self.argument_parser.add_argument("CRAWL_DB_FILE", type=str,
+                                          help="path to the crawl database")
+        self.argument_parser.add_argument("KML_FILE", type=argparse.FileType("w"),
+                                          help="path to which to save the KML, or '-' for STDOUT (the default)")
+
+    def run(self, args):
+        class GeoDatabase(Database):
+            locations: Table[Geolocation]
+
+        with GeoDatabase(args.CRAWL_DB_FILE) as db:
+            args.KML_FILE.write(to_kml(
+                table=db.locations,
+                doc_id="docid",
+                doc_name="doc_name",
+                doc_description="doc_description",
+                folder_id="folder_id",
+                folder_name="folder_name",
+                folder_description="folder_description"
+            ).to_string(prettyprint=True))

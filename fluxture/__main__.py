@@ -3,6 +3,7 @@ import sys
 
 from .bitcoin import Bitcoin, BitcoinNode
 from .crawler import Crawler, CrawlDatabase, DatabaseCrawl
+from .fluxture import add_command_subparsers
 from .geolocation import GeoIP2Error, GeoIP2Locator
 
 
@@ -20,7 +21,12 @@ def main():
                         help="License key for automatically downloading a GeoLite2 City database; you generate get a "
                              "free license key by registering at https://www.maxmind.com/en/geolite2/signup")
 
+    add_command_subparsers(parser)
+
     args = parser.parse_args()
+
+    args.func(args)
+    exit(0)
 
     try:
         geo = GeoIP2Locator(args.city_db_path, args.maxmind_license_key)
