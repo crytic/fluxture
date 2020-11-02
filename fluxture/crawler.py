@@ -21,11 +21,11 @@ class Geolocation(Model):
 
 
 class CrawledNode(Model["CrawlDatabase"]):
-    ip: primary_key(IPv6Address)
+    ip: IPv6Address
     port: int
 
     def get_events(self) -> Cursor["CrawlEvent"]:
-        return self.db.events.select(node=self.ip, order_by="timestamp DESC")
+        return self.db.events.select(node=self.rowid, order_by="timestamp DESC")
 
     def get_location(self) -> Optional[Geolocation]:
         try:

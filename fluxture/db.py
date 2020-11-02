@@ -30,6 +30,28 @@ class AutoIncrement(int):
             return f"{self.__class__.__name__}()"
 
 
+class RowId(int):
+    initialized: bool = False
+
+    def __new__(cls, *args):
+        if args and (len(args) > 1 or not isinstance(args[0], RowId) or args[0].initialized):
+            retval = int.__new__(cls, *args)
+            setattr(retval, "initialized", True)
+        else:
+            retval = int.__new__(cls, 0)
+            setattr(retval, "initialized", False)
+        return retval
+
+    def __repr__(self):
+        if self.initialized:
+            return f"{self.__class__.__name__}({int(self)})"
+        else:
+            return f"{self.__class__.__name__}()"
+
+    def __eq__(self, other):
+        return isinstance(other, RowId) and (not self.initialized or not other.initialized or int(self) == int(other))
+
+
 class ColumnOptions:
     def __init__(
         self,
@@ -138,9 +160,10 @@ D = TypeVar("D", bound="Database")
 
 
 class Model(Struct[FieldType], Generic[D]):
-    non_serialized = "primary_key_name", "_db"
+    non_serialized = "primary_key_name", "_db", "rowid"
     primary_key_name: str = "rowid"
     _db: Optional[D] = None
+    rowid: RowId
 
     @staticmethod
     def is_primary_key(cls) -> bool:
@@ -165,6 +188,12 @@ class Model(Struct[FieldType], Generic[D]):
                 primary_name = field_name
         if primary_name is not None:
             cls.primary_key_name = primary_name
+        if "rowid" not in fields:
+            fields["rowid"] = default(RowId, RowId())
+
+    @property
+    def in_db(self) -> bool:
+        return self.rowid.initialized and self._db is not None
 
     def uninitialized_auto_increments(self) -> Iterator[Tuple[str, AutoIncrement]]:
         for key in self.keys():
@@ -189,7 +218,7 @@ class Model(Struct[FieldType], Generic[D]):
     def to_row(self) -> Iterator[FieldType]:
         for key in self.keys():
             value = getattr(self, key)
-            if isinstance(value, AutoIncrement) and not value.initialized:
+            if (isinstance(value, AutoIncrement) or isinstance(value, RowId)) and not value.initialized:
                 yield None
             else:
                 yield getattr(self, key)
@@ -365,7 +394,7 @@ class Table(Generic[M]):
             distinct_clause = " DISTINCT"
         else:
             distinct_clause = ""
-        return Cursor(self, f"SELECT{distinct_clause} * from {self.name}{clauses}", params)
+        return Cursor(self, f"SELECT{distinct_clause} *, rowid from {self.name}{clauses}", params)
 
     def __len__(self):
         with self.db:
@@ -380,7 +409,7 @@ class Table(Generic[M]):
         to_update = [key for key, _ in row.uninitialized_auto_increments()]
         if to_update:
             try:
-                obj_in_db = next(iter(self.select(**{row.primary_key_name: getattr(row, row.primary_key_name)})))
+                obj_in_db = next(iter(self.select(**{"rowid": row.rowid})))
             except StopIteration:
                 raise ValueError(f"Row {row} was expected to be in the database in table {self.name}, but was not")
             for key in to_update:
@@ -395,22 +424,22 @@ class Table(Generic[M]):
             rows = list(rows)
             if not rows:
                 return
-            row_data = [
-                tuple(
-                    sql_format(param, expected_type)
-                    for param, expected_type in zip(row.to_row(), self.model_type.FIELDS.values())
-                )
-                for row in rows
-            ]
+            cur = self.db.con.cursor()
             try:
-                self.db.con.executemany(f"INSERT INTO {self.name} ({','.join(self.model_type.FIELDS.keys())}) VALUES "
-                                        f"({','.join(['?']*len(self.model_type.FIELDS))});", row_data)
-            except sqlite3.Error:
-                print(f"INSERT INTO {self.name} ({','.join(self.model_type.FIELDS.keys())}) VALUES "
-                                        f"({','.join(['?']*len(self.model_type.FIELDS))});", row_data)
-                raise
-            for row in rows:
-                self._finalize_added_row(row)
+                # we have to add each row individually so we can set its rowid
+                for row in rows:
+                    if row.in_db:
+                        raise ValueError(f"Row {row!r} is already in the database!")
+                    result = cur.execute(f"INSERT INTO {self.name} ({','.join(self.model_type.FIELDS.keys())}) "
+                                         f"VALUES ({','.join(['?']*len(self.model_type.FIELDS))})", tuple(
+                                            sql_format(param, expected_type)
+                                            for param, expected_type
+                                            in zip(row.to_row(), self.model_type.FIELDS.values())
+                                         ))
+                    setattr(row, "rowid", RowId(result.lastrowid))
+                    self._finalize_added_row(row)
+            finally:
+                cur.close()
 
 
 class ForeignKey(Generic[M]):
@@ -548,7 +577,9 @@ class Database(metaclass=StructMeta[Model]):
         table = table_type(self, table_name)
         model_type = table_type.model_type
         for field_name, field_type in model_type.FIELDS.items():
-            if issubclass(field_type, ForeignKey):
+            if issubclass(field_type, RowId):
+                continue
+            elif issubclass(field_type, ForeignKey):
                 old_field_type = field_type
                 field_type = field_type.key_type()
                 if hasattr(old_field_type, "column_options"):

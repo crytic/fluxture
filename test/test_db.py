@@ -14,7 +14,7 @@ class Person(Model):
 class TestDatabase(TestCase):
     def test_create_table(self):
         db = Database()
-        table = db.create_table(Table[Person])
+        table = db.create_table("people", Table[Person])
         self.assertEqual(len(table), 0)
         person = Person(name="Foo", age=1337)
         table.append(person)
