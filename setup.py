@@ -10,6 +10,7 @@ setup(
     packages=find_packages(exclude=['test']),
     python_requires='>=3.7',
     install_requires=[
+        'geoip2==4.1.0',
         'tqdm==4.48.0',
     ],
     entry_points={

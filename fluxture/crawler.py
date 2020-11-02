@@ -9,15 +9,11 @@ from typing import (
 )
 
 from .blockchain import Blockchain, Node
-from .db import Cursor, Database, ForeignKey, Model, primary_key, Table
+from .db import Cursor, Database, ForeignKey, Model, Table
+from .geolocation import Geolocation, Geolocator
 from .serialization import DateTime, IPv6Address
 
 N = TypeVar("N", bound=Node)
-
-
-class Geolocation(Model):
-    ip: IPv6Address
-    timestamp: DateTime
 
 
 class CrawledNode(Model["CrawlDatabase"]):
@@ -85,6 +81,10 @@ class Crawl(Generic[N], Sized):
         raise NotImplementedError()
 
     @abstractmethod
+    def set_location(self, ip: IPv6Address, location: Geolocation):
+        raise NotImplementedError()
+
+    @abstractmethod
     def get_neighbors(self, node: N) -> FrozenSet[N]:
         raise NotImplementedError()
 
@@ -134,36 +134,30 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
                 for neighbor in neighbors
             ])
 
+    def set_location(self, ip: IPv6Address, location: Geolocation):
+        self.db.locations.append(location)
+
     def __len__(self) -> int:
         return len(self.db.nodes)
 
 
-class InMemoryCrawl(Generic[N], Crawl[N]):
-    def __init__(self):
-        self.neighbors: Dict[N, FrozenSet[N]] = {}
-
-    def __contains__(self, node: N):
-        return node in self.neighbors
-
-    def __len__(self):
-        return len(self.neighbors)
-
-    def get_neighbors(self, node: N) -> FrozenSet[N]:
-        return self.neighbors[node]
-
-    def set_neighbors(self, node: N, neighbors: FrozenSet[N]):
-        print(f"{node} -> {neighbors!r}")
-        self.neighbors[node] = neighbors
-
-
 class Crawler(Generic[N], metaclass=ABCMeta):
-    def __init__(self, blockchain: Blockchain[N], crawl: Crawl[N], max_connections: int = 1024):
+    def __init__(
+            self,
+            blockchain: Blockchain[N],
+            crawl: Crawl[N],
+            geolocator: Optional[Geolocator] = None,
+            max_connections: int = 1024
+    ):
         self.blockchain: Blockchain[N] = blockchain
         self.crawl: Crawl[N] = crawl
+        self.geolocator: Optional[Geolocator] = geolocator
         self.nodes: Dict[N, N] = {}
         self.max_connections: int = max_connections
 
     async def _crawl_node(self, node: N) -> FrozenSet[N]:
+        if self.geolocator is not None:
+            self.crawl.set_location(node.address, self.geolocator.locate(node.address))
         async with node:
             neighbors = []
             new_neighbors = set()
