@@ -1,6 +1,8 @@
 import asyncio
+import sys
 import traceback
 from abc import ABCMeta, abstractmethod
+from argparse import ArgumentParser, Namespace
 from asyncio import ensure_future, Future
 from collections import deque
 from ipaddress import IPv4Address, IPv6Address as IPv6AddressPython
@@ -8,9 +10,10 @@ from typing import (
     Callable, Deque, Dict, FrozenSet, Generic, Iterable, List, Optional, Set, Sized, TypeVar, Union
 )
 
-from .blockchain import Blockchain, Node
+from .blockchain import Blockchain, BLOCKCHAINS, Node
 from .db import Cursor, Database, ForeignKey, Model, Table
-from .geolocation import Geolocation, Geolocator
+from .fluxture import Command
+from .geolocation import CITY_DB_PARSER, GeoIP2Error, GeoIP2Locator, Geolocation, Geolocator
 from .serialization import DateTime, IPv6Address
 
 N = TypeVar("N", bound=Node)
@@ -208,3 +211,41 @@ class Crawler(Generic[N], metaclass=ABCMeta):
 
     def do_crawl(self, seeds: Optional[Iterable[N]] = None):
         asyncio.run(self._crawl(seeds))
+
+
+class CrawlCommand(Command):
+    name = "crawl"
+    help = "crawl a blockchain"
+    parent_parsers = CITY_DB_PARSER,
+
+    def __init_arguments__(self, parser: ArgumentParser):
+        parser.add_argument("--database", "-db", type=str, default=":memory:",
+                            help="path to the crawl database (default is to run in memory)")
+        parser.add_argument("BLOCKCHAIN_NAME", type=str, help="the name of the blockchain to crawl",
+                            choices=BLOCKCHAINS.keys())
+
+    def run(self, args: Namespace):
+        try:
+            geo = GeoIP2Locator(args.city_db_path, args.maxmind_license_key)
+        except GeoIP2Error as e:
+            sys.stderr.write(f"Warning: {e}\nCrawl IPs will not be geolocated!\n")
+            geo = None
+
+        if args.database == ":memory:":
+            sys.stderr.write("Warning: Using an in-memory crawl database. Results will not be saved!\n"
+                             "Run with `--database` to set a path for the database to be saved.\n")
+
+        blockchain_type = BLOCKCHAINS[args.BLOCKCHAIN_NAME]
+
+        def crawl():
+            Crawler(
+                blockchain=blockchain_type(),
+                crawl=DatabaseCrawl(blockchain_type.node_type, CrawlDatabase(args.database)),
+                geolocator=geo
+            ).do_crawl()
+
+        if geo is None:
+            crawl()
+        else:
+            with geo:
+                crawl()

@@ -2,7 +2,7 @@ import asyncio
 import socket
 from abc import ABCMeta, abstractmethod
 from ipaddress import ip_address, IPv4Address, IPv6Address
-from typing import AsyncIterator, FrozenSet, Generic, Optional, Tuple, TypeVar, Union
+from typing import AsyncIterator, Dict, FrozenSet, Generic, Optional, Tuple, Type, TypeVar, Union
 
 from .messaging import Message
 from . import serialization
@@ -102,8 +102,20 @@ class Node(metaclass=ABCMeta):
 N = TypeVar('N', bound=Node)
 
 
+BLOCKCHAINS: Dict[str, Type["Blockchain[Node]"]] = {}
+
+
 class Blockchain(Generic[N], metaclass=ABCMeta):
     DEFAULT_SEEDS: Tuple[N, ...] = ()
+    name: str
+    node_type: Type[N]
+
+    def __init_subclass__(cls, **kwargs):
+        if not hasattr(cls, "name") or cls.name is None:
+            raise TypeError("Subclasses of `Blockchain` must define a `name`")
+        if not hasattr(cls, "node_type") or cls.node_type is None:
+            raise TypeError("Subclasses of `Blockchain` must define a `node_type`")
+        BLOCKCHAINS[cls.name] = cls
 
     @abstractmethod
     async def get_neighbors(self, node: N) -> FrozenSet[N]:

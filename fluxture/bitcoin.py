@@ -432,6 +432,8 @@ async def collect_defaults(*args: Union[Tuple[str], Tuple[str, int]]) -> Tuple[B
 
 
 class Bitcoin(Blockchain[BitcoinNode]):
+    name = "bitcoin"
+    node_type = BitcoinNode
     DEFAULT_SEEDS = asyncio.run(collect_defaults(
         ("dnsseed.bitcoin.dashjr.org",),
         #BitcoinNode("dnsseed.bluematt.me"),

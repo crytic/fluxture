@@ -141,15 +141,28 @@ class GeoIP2Locator:
             )
 
 
+CITY_DB_PARSER: argparse.ArgumentParser = argparse.ArgumentParser(add_help=False)
+
+CITY_DB_PARSER.add_argument("--city-db-path", "-c", type=str, default=None,
+                            help="path to a MaxMind GeoLite2 City database (default is "
+                            "`~/.config/fluxture/geolite2/GeoLite2-City.mmdb`); "
+                            "if omitted and `--maxmind-license-key` is provided, the latest database will be "
+                            "downloaded and saved to the default location; "
+                            "if both options are omttied, then geolocation will not be performed")
+CITY_DB_PARSER.add_argument("--maxmind-license-key", type=str, default=None,
+                            help="License key for automatically downloading a GeoLite2 City database; you generate get "
+                            "a free license key by registering at https://www.maxmind.com/en/geolite2/signup")
+
+
 class ToKML(Command):
     name = "kml"
     help = "export a KML file visualizing the crawled data"
 
-    def __init_arguments__(self):
-        self.argument_parser.add_argument("CRAWL_DB_FILE", type=str,
-                                          help="path to the crawl database")
-        self.argument_parser.add_argument("KML_FILE", type=argparse.FileType("w"),
-                                          help="path to which to save the KML, or '-' for STDOUT (the default)")
+    def __init_arguments__(self, parser: argparse.ArgumentParser):
+        parser.add_argument("CRAWL_DB_FILE", type=str,
+                            help="path to the crawl database")
+        parser.add_argument("KML_FILE", type=argparse.FileType("w"),
+                            help="path to which to save the KML, or '-' for STDOUT (the default)")
 
     def run(self, args):
         class GeoDatabase(Database):
