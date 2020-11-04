@@ -8,7 +8,7 @@ from typing_extensions import Protocol
 
 import geoip2.database
 from fastkml import kml
-from fastkml.geometry import LineString, Point
+from fastkml.geometry import Geometry, LineString, Point
 from fastkml.styles import IconStyle, LineStyle, Style
 
 from .db import Model, Table
@@ -72,7 +72,11 @@ def to_kml(
             )
             p.append_style(edge_style)
             edge_row = table.select(limit=1, ip=edge).fetchone()
-            p.geometry = LineString([(geolocation.lon, geolocation.lat), (edge_row.lon, edge_row.lat)])
+            p.geometry = Geometry(
+                geometry=LineString([(geolocation.lon, geolocation.lat), (edge_row.lon, edge_row.lat)]),
+                tessellate=True,
+                altitude_mode="clampToGround"
+            )
             edge_folder.append(p)
     return k
 
