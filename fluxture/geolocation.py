@@ -1,19 +1,17 @@
-import argparse
 import tarfile
 import urllib.request
 from ipaddress import IPv6Address as PythonIPv6, IPv4Address as PythonIPv4
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Iterator, Optional, Union
+from typing import Callable, Iterable, Iterator, Optional, Union
 from typing_extensions import Protocol
 
 import geoip2.database
 from fastkml import kml
-from fastkml.geometry import Point
-from fastkml.styles import IconStyle, Style
+from fastkml.geometry import LineString, Point
+from fastkml.styles import IconStyle, LineStyle, Style
 
-from .db import Database, Model, Table
-from .fluxture import Command
+from .db import Model, Table
 from .serialization import DateTime, IPv6Address
 
 
@@ -50,17 +48,32 @@ def to_kml(
         doc_id: str,
         doc_name: str,
         doc_description: str,
-        folder_id: str,
-        folder_name: str,
-        folder_description: str
+        edges: Callable[[Geolocation], Iterable[IPv6Address]] = lambda ip: ()
 ) -> kml.KML:
     k = kml.KML()
     d = kml.Document(KML_NS, doc_id, doc_name, doc_description)
     k.append(d)
-    f = kml.Folder(KML_NS, folder_name, folder_id, folder_description)
+    f = kml.Folder(KML_NS, "ips", "IPs", "Geolocalized IPs")
     d.append(f)
     for p in Geolocation.placemarks(table):
         f.append(p)
+    edge_folder = kml.Folder(KML_NS, "topology", "Topology", "The network topology discovered in the crawl")
+    d.append(edge_folder)
+    edge_color = (0, 255, 0)
+    edge_hex_color = "7f%02x%02x%02x" % tuple(reversed(edge_color))
+    edge_style = Style(KML_NS, styles=[LineStyle(KML_NS, id="edge", color=edge_hex_color, width=3)])
+    for geolocation in table:
+        for edge in edges(geolocation):
+            p = kml.Placemark(
+                KML_NS,
+                f"{geolocation.ip!s}->{edge!s}",
+                f"{geolocation.ip!s}->{edge!s}",
+                f"Edge between {geolocation.ip!s} and {edge!s}"
+            )
+            p.append_style(edge_style)
+            edge_row = table.select(limit=1, ip=edge).fetchone()
+            p.geometry = LineString([(geolocation.lon, geolocation.lat), (edge_row.lon, edge_row.lat)])
+            edge_folder.append(p)
     return k
 
 
@@ -139,42 +152,3 @@ class GeoIP2Locator:
                 lon=city.location.longitude,
                 timestamp=DateTime()
             )
-
-
-CITY_DB_PARSER: argparse.ArgumentParser = argparse.ArgumentParser(add_help=False)
-
-CITY_DB_PARSER.add_argument("--city-db-path", "-c", type=str, default=None,
-                            help="path to a MaxMind GeoLite2 City database (default is "
-                            "`~/.config/fluxture/geolite2/GeoLite2-City.mmdb`); "
-                            "if omitted and `--maxmind-license-key` is provided, the latest database will be "
-                            "downloaded and saved to the default location; "
-                            "if both options are omttied, then geolocation will not be performed")
-CITY_DB_PARSER.add_argument("--maxmind-license-key", type=str, default=None,
-                            help="License key for automatically downloading a GeoLite2 City database; you generate get "
-                            "a free license key by registering at https://www.maxmind.com/en/geolite2/signup")
-
-
-class ToKML(Command):
-    name = "kml"
-    help = "export a KML file visualizing the crawled data"
-
-    def __init_arguments__(self, parser: argparse.ArgumentParser):
-        parser.add_argument("CRAWL_DB_FILE", type=str,
-                            help="path to the crawl database")
-        parser.add_argument("KML_FILE", type=argparse.FileType("w"),
-                            help="path to which to save the KML, or '-' for STDOUT (the default)")
-
-    def run(self, args):
-        class GeoDatabase(Database):
-            locations: Table[Geolocation]
-
-        with GeoDatabase(args.CRAWL_DB_FILE) as db:
-            args.KML_FILE.write(to_kml(
-                table=db.locations,
-                doc_id="docid",
-                doc_name="doc_name",
-                doc_description="doc_description",
-                folder_id="folder_id",
-                folder_name="folder_name",
-                folder_description="folder_description"
-            ).to_string(prettyprint=True))

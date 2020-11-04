@@ -2,7 +2,7 @@ import asyncio
 import sys
 import traceback
 from abc import ABCMeta
-from argparse import ArgumentParser, Namespace
+from argparse import ArgumentParser, FileType, Namespace
 from asyncio import ensure_future, Future
 from collections import deque
 from typing import Deque, Dict, FrozenSet, Generic, Iterable, List, Optional
@@ -10,7 +10,7 @@ from typing import Deque, Dict, FrozenSet, Generic, Iterable, List, Optional
 from .blockchain import Blockchain, BLOCKCHAINS
 from .crawl_schema import Crawl, CrawlDatabase, DatabaseCrawl, N
 from .fluxture import Command
-from .geolocation import CITY_DB_PARSER, GeoIP2Error, GeoIP2Locator, Geolocator
+from .geolocation import GeoIP2Error, GeoIP2Locator, Geolocator, to_kml
 
 
 class Crawler(Generic[N], metaclass=ABCMeta):
@@ -82,6 +82,19 @@ class Crawler(Generic[N], metaclass=ABCMeta):
         asyncio.run(self._crawl(seeds))
 
 
+CITY_DB_PARSER: ArgumentParser = ArgumentParser(add_help=False)
+
+CITY_DB_PARSER.add_argument("--city-db-path", "-c", type=str, default=None,
+                            help="path to a MaxMind GeoLite2 City database (default is "
+                            "`~/.config/fluxture/geolite2/GeoLite2-City.mmdb`); "
+                            "if omitted and `--maxmind-license-key` is provided, the latest database will be "
+                            "downloaded and saved to the default location; "
+                            "if both options are omttied, then geolocation will not be performed")
+CITY_DB_PARSER.add_argument("--maxmind-license-key", type=str, default=None,
+                            help="License key for automatically downloading a GeoLite2 City database; you generate get "
+                            "a free license key by registering at https://www.maxmind.com/en/geolite2/signup")
+
+
 class CrawlCommand(Command):
     name = "crawl"
     help = "crawl a blockchain"
@@ -118,3 +131,24 @@ class CrawlCommand(Command):
         else:
             with geo:
                 crawl()
+
+
+class ToKML(Command):
+    name = "kml"
+    help = "export a KML file visualizing the crawled data"
+
+    def __init_arguments__(self, parser: ArgumentParser):
+        parser.add_argument("CRAWL_DB_FILE", type=str,
+                            help="path to the crawl database")
+        parser.add_argument("KML_FILE", type=FileType("w"),
+                            help="path to which to save the KML, or '-' for STDOUT (the default)")
+
+    def run(self, args):
+        with CrawlDatabase(args.CRAWL_DB_FILE) as db:
+            args.KML_FILE.write(to_kml(
+                table=db.locations,
+                doc_id=f"{args.CRAWL_DB_FILE}_IPs",
+                doc_name=f"{args.CRAWL_DB_FILE} IPs",
+                doc_description=f"Geolocalized IPs from crawl {args.CRAWL_DB_FILE}",
+                edges=lambda edge: (e.to_node.ip for e in db.edges.select(from_node=edge.rowid).fetchall())
+            ).to_string(prettyprint=True))
