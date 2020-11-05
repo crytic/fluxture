@@ -64,6 +64,9 @@ def to_kml(
     edge_style = Style(KML_NS, styles=[LineStyle(KML_NS, id="edge", color=edge_hex_color, width=3)])
     for geolocation in table:
         for edge in edges(geolocation):
+            edge_row = table.select(limit=1, ip=edge).fetchone()
+            if edge_row is None:
+                continue
             p = kml.Placemark(
                 KML_NS,
                 f"{geolocation.ip!s}->{edge!s}",
@@ -71,7 +74,6 @@ def to_kml(
                 f"Edge between {geolocation.ip!s} and {edge!s}"
             )
             p.append_style(edge_style)
-            edge_row = table.select(limit=1, ip=edge).fetchone()
             p.geometry = Geometry(
                 geometry=LineString([(geolocation.lon, geolocation.lat), (edge_row.lon, edge_row.lat)]),
                 tessellate=True,
