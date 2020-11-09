@@ -370,7 +370,7 @@ class BitcoinNode(Node):
             addr_recv=NetAddr(ip=self.address, port=self.port),
             addr_from=NetAddr(ip="::ffff:127.0.0.1", port=8333),
             nonce=0,
-            user_agent=b"BlockScraper",
+            user_agent=b"fluxture",
             start_height=0,
             relay=True
         ))
