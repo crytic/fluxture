@@ -76,6 +76,10 @@ class Crawl(Generic[N], Sized):
         raise NotImplementedError()
 
     @abstractmethod
+    def add_event(self, node: CrawledNode, event: str, description: str, timestamp: Optional[DateTime] = None):
+        raise NotImplementedError()
+
+    @abstractmethod
     def set_location(self, ip: IPv6Address, location: Geolocation):
         raise NotImplementedError()
 
@@ -110,6 +114,16 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
         ret = CrawledNode(ip=node.address, port=node.port)
         self.db.nodes.append(ret)
         return ret
+
+    def add_event(self, node: CrawledNode, event: str, description: str, timestamp: Optional[DateTime] = None):
+        if timestamp is None:
+            timestamp = DateTime()
+        self.db.events.append(CrawlEvent(
+            node=node.rowid,
+            event=event,
+            description=description,
+            timestamp=timestamp
+        ))
 
     def get_neighbors(self, node: N) -> FrozenSet[N]:
         return frozenset({

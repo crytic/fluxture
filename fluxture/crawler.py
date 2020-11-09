@@ -57,6 +57,8 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                 futures = list(pending)
                 for result in await asyncio.gather(*done, return_exceptions=True):
                     if isinstance(result, Exception):
+                        # TODO: Save the exception to the database
+                        # self.crawl.add_event(node, event="Exception", description=str(result))
                         traceback.print_tb(result.__traceback__)
                         print(result)
                     else:
