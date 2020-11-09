@@ -436,11 +436,11 @@ class Bitcoin(Blockchain[BitcoinNode]):
     node_type = BitcoinNode
     DEFAULT_SEEDS = asyncio.run(collect_defaults(
         ("dnsseed.bitcoin.dashjr.org",),
-        #BitcoinNode("dnsseed.bluematt.me"),
-        #BitcoinNode("seed.bitcoin.jonasschnelli.ch"),
+        ("dnsseed.bluematt.me",),
+        ("seed.bitcoin.jonasschnelli.ch",),
         ("seed.bitcoin.sipa.be",),
-        #BitcoinNode("seed.bitcoinstats.com"),
-        #BitcoinNode("seed.btc.petertodd.org")
+        ("seed.bitcoinstats.com",),
+        ("seed.btc.petertodd.org",)
     ))
 
     async def get_neighbors(self, node: BitcoinNode) -> FrozenSet[BitcoinNode]:
