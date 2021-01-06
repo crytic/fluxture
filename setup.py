@@ -13,6 +13,7 @@ setup(
         'fastkml==0.11',
         'geoip2==4.1.0',
         'lxml==4.6.1',
+        'six>=1.5',
         'tqdm==4.48.0',
     ],
     entry_points={
