@@ -133,37 +133,3 @@ class CrawlCommand(Command):
         else:
             with geo:
                 crawl()
-
-
-class ToKML(Command):
-    name = "kml"
-    help = "export a KML file visualizing the crawled data"
-
-    def __init_arguments__(self, parser: ArgumentParser):
-        parser.add_argument("CRAWL_DB_FILE", type=str,
-                            help="path to the crawl database")
-        parser.add_argument("KML_FILE", type=FileType("w"),
-                            help="path to which to save the KML, or '-' for STDOUT (the default)")
-
-    def run(self, args):
-        with CrawlDatabase(args.CRAWL_DB_FILE) as db:
-            def edges(location: Geolocation) -> Iterable[IPv6Address]:
-                possible_nodes_by_port: Dict[int, CrawledNode] = {}
-                for possible_node in db.nodes.select(ip=location.ip):
-                    port = possible_node.port
-                    if port in possible_nodes_by_port:
-                        # choose the version that was crawled most recently
-                        if possible_nodes_by_port[port].last_crawled() >= possible_node.last_crawled():
-                            continue
-                    possible_nodes_by_port[port] = possible_node
-                neighbors = set()
-                for node in possible_nodes_by_port.values():
-                    neighbors |= {neighbor.ip for neighbor in node.get_latest_edges()}
-                return neighbors
-            args.KML_FILE.write(to_kml(
-                table=db.locations,
-                doc_id=f"{args.CRAWL_DB_FILE}_IPs",
-                doc_name=f"{args.CRAWL_DB_FILE} IPs",
-                doc_description=f"Geolocalized IPs from crawl {args.CRAWL_DB_FILE}",
-                edges=edges
-            ).to_string(prettyprint=True))

@@ -1,7 +1,7 @@
 import sys
 from argparse import ArgumentParser
 from collections import OrderedDict
-from typing import Callable, Optional
+from typing import Callable, Optional, OrderedDict as OrderedDictType
 
 import graphviz
 import networkx as nx
@@ -58,8 +58,8 @@ class CrawlGraph(nx.DiGraph):
                 to_remove |= connected_component
         self.remove_nodes_from(to_remove)
 
-    def pagerank(self):
-        return nx.pagerank(self)
+    def pagerank(self) -> OrderedDictType[CrawledNode, float]:
+        return OrderedDict(sorted(nx.pagerank(self).items(), key=lambda item: item[1], reverse=True))
 
 
 class Topology(Command):
@@ -81,8 +81,6 @@ class Topology(Command):
             sys.stderr.write("Error: The crawl is insufficient; all of the nodes are in their own connected "
                              "components\n")
             return 1
-        pr = OrderedDict(sorted(graph.pagerank().items(), key=lambda item: item[1], reverse=True))
-        print(f"SUM: {sum(val for val in pr.values())}")
-        for node, rank in pr.items():
+        for node, rank in graph.pagerank().items():
             print(f"[{node.ip!s}]:{node.port}\t{rank}")
         return 0

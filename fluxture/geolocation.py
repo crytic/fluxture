@@ -10,6 +10,7 @@ import geoip2.database
 from fastkml import kml
 from fastkml.geometry import Geometry, LineString, Point
 from fastkml.styles import IconStyle, LineStyle, Style
+from tqdm import tqdm
 
 from .db import Model, Table
 from .serialization import DateTime, IPv6Address
@@ -25,15 +26,16 @@ class Geolocation(Model):
     lon: float
     timestamp: DateTime
 
-    def to_placemark(self) -> kml.Placemark:
-        icon = Style(KML_NS, styles=[IconStyle(KML_NS, id="ip")])
+    def to_placemark(self, style: Optional[Style] = None) -> kml.Placemark:
+        if style is None:
+            style = Style(KML_NS, styles=[IconStyle(KML_NS, id="ip")])
         p = kml.Placemark(
             KML_NS,
             str(int(self.rowid)),
             str(self.ip),
             f"{self.ip!s}: {self.city} ({self.lat}°N, {self.lon}°E) @ {self.timestamp!s}"
         )
-        p.append_style(icon)
+        p.append_style(style)
         p.geometry = Point(self.lon, self.lat)
         return p
 
@@ -48,21 +50,22 @@ def to_kml(
         doc_id: str,
         doc_name: str,
         doc_description: str,
-        edges: Callable[[Geolocation], Iterable[IPv6Address]] = lambda ip: ()
+        edges: Callable[[Geolocation], Iterable[IPv6Address]] = lambda ip: (),
+        to_placemark: Callable[[Geolocation], kml.Placemark] = lambda loc: loc.to_placemark()
 ) -> kml.KML:
     k = kml.KML()
     d = kml.Document(KML_NS, doc_id, doc_name, doc_description)
     k.append(d)
     f = kml.Folder(KML_NS, "ips", "IPs", "Geolocalized IPs")
     d.append(f)
-    for p in Geolocation.placemarks(table):
-        f.append(p)
+    for loc in table:
+        f.append(to_placemark(loc))
     edge_folder = kml.Folder(KML_NS, "topology", "Topology", "The network topology discovered in the crawl")
     d.append(edge_folder)
     edge_color = (0, 255, 0)
     edge_hex_color = "7f%02x%02x%02x" % tuple(reversed(edge_color))
     edge_style = Style(KML_NS, styles=[LineStyle(KML_NS, id="edge", color=edge_hex_color, width=3)])
-    for geolocation in table:
+    for geolocation in tqdm(table, leave=False, desc="Generating KML", unit=" locations"):
         for edge in edges(geolocation):
             edge_row = table.select(limit=1, ip=edge).fetchone()
             if edge_row is None:
