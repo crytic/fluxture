@@ -10,11 +10,13 @@ setup(
     packages=find_packages(exclude=['test']),
     python_requires='>=3.7',
     install_requires=[
-        'fastkml==0.11',
-        'geoip2==4.1.0',
-        'lxml==4.6.1',
+        'fastkml~=0.11',
+        'geoip2~=4.1.0',
+        'graphviz~=0.14.1',
+        'lxml~=4.6.1',
+        'networkx~=2.4',
         'six>=1.5',
-        'tqdm==4.48.0',
+        'tqdm~=4.48.0',
     ],
     entry_points={
         'console_scripts': [
