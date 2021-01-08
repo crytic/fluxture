@@ -2,15 +2,15 @@ import asyncio
 import sys
 import traceback
 from abc import ABCMeta
-from argparse import ArgumentParser, FileType, Namespace
+from argparse import ArgumentParser, Namespace
 from asyncio import ensure_future, Future
 from collections import deque
 from typing import Deque, Dict, FrozenSet, Generic, Iterable, List, Optional
 
 from .blockchain import Blockchain, BLOCKCHAINS
-from .crawl_schema import Crawl, CrawlDatabase, CrawledNode, DatabaseCrawl, IPv6Address, N
+from .crawl_schema import Crawl, CrawlDatabase, DatabaseCrawl, N
 from .fluxture import Command
-from .geolocation import GeoIP2Error, GeoIP2Locator, Geolocation, Geolocator, to_kml
+from .geolocation import GeoIP2Error, GeoIP2Locator, Geolocator
 
 
 class Crawler(Generic[N], metaclass=ABCMeta):

@@ -16,6 +16,7 @@ setup(
         'great-circle-calculator~=1.1.0',
         'lxml~=4.6.1',
         'networkx~=2.4',
+        'shapely~=1.7.1',
         'six>=1.5',
         'tqdm~=4.48.0',
     ],
