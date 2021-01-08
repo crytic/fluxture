@@ -26,6 +26,8 @@ EARTH_DIAMETER = 12742000.0
 class Geolocation(Model):
     ip: IPv6Address
     city: str
+    country_code: str
+    continent_code: str
     lat: float
     lon: float
     timestamp: DateTime
@@ -183,6 +185,8 @@ class GeoIP2Locator:
             return Geolocation(
                 ip=IPv6Address(ip),
                 city=city.city.name,
+                country_code=city.country.iso_code,
+                continent_code=city.continent.code,
                 lat=city.location.latitude,
                 lon=city.location.longitude,
                 timestamp=DateTime()
