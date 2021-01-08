@@ -1,12 +1,14 @@
 import tarfile
 import urllib.request
 from ipaddress import IPv6Address as PythonIPv6, IPv4Address as PythonIPv4
+from math import pi, sin
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Callable, Iterable, Iterator, Optional, Union
+from typing import Callable, Iterable, Iterator, Optional, Tuple, Union
 from typing_extensions import Protocol
 
 import geoip2.database
+import great_circle_calculator.great_circle_calculator as gcc
 from fastkml import kml
 from fastkml.geometry import Geometry, LineString, Point
 from fastkml.styles import IconStyle, LineStyle, Style
@@ -17,6 +19,8 @@ from .serialization import DateTime, IPv6Address
 
 
 KML_NS = "{http://www.opengis.net/kml/2.2}"
+EARTH_CIRCUMFERENCE = 40075000.0
+EARTH_DIAMETER = 12742000.0
 
 
 class Geolocation(Model):
@@ -25,6 +29,20 @@ class Geolocation(Model):
     lat: float
     lon: float
     timestamp: DateTime
+
+    def path_to(self, destination: "Geolocation", intermediate_points: int = 20) -> Iterator[Tuple[int, int]]:
+        p1, p2 = (self.lon, self.lat), (destination.lon, destination.lat)
+        yield self.lon, self.lat
+        for i in range(intermediate_points):
+            try:
+                yield gcc.intermediate_point(p1, p2, (i + 1) / (intermediate_points + 2))
+            except ZeroDivisionError:
+                # this probably means p1 == p2
+                yield self.lon, self.lat
+        yield destination.lon, destination.lat
+
+    def distance_to(self, destination: "Geolocation", unit: str = "meters"):
+        return gcc.distance_between_points((self.lon, self.lat), (destination.lon, destination.lat), unit=unit)
 
     def to_placemark(self, style: Optional[Style] = None) -> kml.Placemark:
         if style is None:
@@ -51,7 +69,8 @@ def to_kml(
         doc_name: str,
         doc_description: str,
         edges: Callable[[Geolocation], Iterable[IPv6Address]] = lambda ip: (),
-        to_placemark: Callable[[Geolocation], kml.Placemark] = lambda loc: loc.to_placemark()
+        to_placemark: Callable[[Geolocation], kml.Placemark] = lambda loc: loc.to_placemark(),
+        max_altitude: float = EARTH_DIAMETER / 4.0
 ) -> kml.KML:
     k = kml.KML()
     d = kml.Document(KML_NS, doc_id, doc_name, doc_description)
@@ -68,7 +87,7 @@ def to_kml(
     for geolocation in tqdm(table, leave=False, desc="Generating KML", unit=" locations"):
         for edge in edges(geolocation):
             edge_row = table.select(limit=1, ip=edge).fetchone()
-            if edge_row is None:
+            if edge_row is None or geolocation.ip == edge_row.ip:
                 continue
             p = kml.Placemark(
                 KML_NS,
@@ -77,10 +96,17 @@ def to_kml(
                 f"Edge between {geolocation.ip!s} and {edge!s}"
             )
             p.append_style(edge_style)
+            num_segments = 20
+            distance = geolocation.distance_to(edge_row)
+            peak_altitude = max_altitude * distance / (EARTH_CIRCUMFERENCE / 2.0)
             p.geometry = Geometry(
-                geometry=LineString([(geolocation.lon, geolocation.lat), (edge_row.lon, edge_row.lat)]),
-                tessellate=True,
-                altitude_mode="clampToGround"
+                geometry=LineString([
+                    (lon, lat, sin(i / (num_segments - 1) * pi) * peak_altitude) for i, (lon, lat) in
+                    enumerate(geolocation.path_to(edge_row, intermediate_points=num_segments-2))
+                ]),
+                tessellate=False,
+                extrude=False,
+                altitude_mode="relativeToGround"
             )
             edge_folder.append(p)
     return k

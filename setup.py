@@ -13,6 +13,7 @@ setup(
         'fastkml~=0.11',
         'geoip2~=4.1.0',
         'graphviz~=0.14.1',
+        'great-circle-calculator~=1.1.0',
         'lxml~=4.6.1',
         'networkx~=2.4',
         'six>=1.5',
