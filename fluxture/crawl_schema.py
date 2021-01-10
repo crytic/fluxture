@@ -23,7 +23,7 @@ class CrawledNode(Model["CrawlDatabase"]):
 
     def get_location(self) -> Optional[Geolocation]:
         try:
-            return next(iter(self.db[Geolocation].select(ip=self.ip, order_by="timestamp DESC")))
+            return next(iter(self.db.locations.select(ip=self.ip, order_by="timestamp DESC")))
         except StopIteration:
             return None
 
