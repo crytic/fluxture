@@ -22,10 +22,7 @@ class CrawledNode(Model["CrawlDatabase"]):
         return self.db.events.select(node=self.rowid, order_by="timestamp DESC")
 
     def get_location(self) -> Optional[Geolocation]:
-        try:
-            return next(iter(self.db.locations.select(ip=self.ip, order_by="timestamp DESC")))
-        except StopIteration:
-            return None
+        return self.db.locations.select(ip=self.ip, order_by="timestamp DESC", limit=1).fetchone()
 
     def last_crawled(self) -> Optional[DateTime]:
         max_edge = Cursor(
