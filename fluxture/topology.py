@@ -1,7 +1,7 @@
 import sys
 from argparse import ArgumentParser
-from collections import OrderedDict
-from typing import Callable, Optional, OrderedDict as OrderedDictType
+from collections import defaultdict, OrderedDict
+from typing import Callable, Dict, FrozenSet, Generic, Hashable, Optional, OrderedDict as OrderedDictType, Set, TypeVar
 
 import graphviz
 import networkx as nx
@@ -12,9 +12,27 @@ from .crawler import CrawlDatabase
 from .fluxture import Command
 
 
-class CrawlGraph(nx.DiGraph):
+N = TypeVar("N", bound=Hashable)
+
+
+class NodeGroup(frozenset, Generic[N], FrozenSet[N]):
+    name: str
+
+    def __new__(cls, *args, **kwargs):
+        if "name" in kwargs:
+            name = kwargs["name"]
+            del kwargs["name"]
+        else:
+            name = None
+        retval = frozenset.__new__(cls, *args, **kwargs)
+        if name is not None:
+            setattr(retval, "name", name)
+        return retval
+
+
+class CrawlGraph(nx.DiGraph, Generic[N]):
     @staticmethod
-    def load(db: CrawlDatabase) -> "CrawlGraph":
+    def load(db: CrawlDatabase) -> "CrawlGraph[CrawledNode]":
         graph = CrawlGraph()
         for node in tqdm(db.nodes, leave=False, desc="Constructing Topology", unit=" nodes"):
             for to_node in node.get_latest_edges():
@@ -24,15 +42,21 @@ class CrawlGraph(nx.DiGraph):
         return graph
 
     def to_dot(
-        self, comment: Optional[str] = None, labeler: Optional[Callable[[CrawledNode], str]] = None, node_filter=None
+            self,
+            comment: Optional[str] = None,
+            labeler: Optional[Callable[[N], str]] = None,
+            node_filter: Optional[Callable[[N], bool]] = None
     ) -> graphviz.Digraph:
         if comment is not None:
             dot = graphviz.Digraph(comment=comment)
         else:
             dot = graphviz.Digraph()
 
-        def default_labeler(node: CrawledNode):
-            return f"[{node.ip!s}]:{node.port}"
+        def default_labeler(node: N):
+            if isinstance(node, CrawledNode):
+                return f"[{node.ip!s}]:{node.port}"
+            else:
+                return str(node)
 
         if labeler is None:
             labeler = default_labeler
@@ -61,6 +85,24 @@ class CrawlGraph(nx.DiGraph):
     def pagerank(self) -> OrderedDictType[CrawledNode, float]:
         return OrderedDict(sorted(nx.pagerank(self).items(), key=lambda item: item[1], reverse=True))
 
+    def group_by(self, grouper: Callable[[N], str]) -> "CrawlGraph[NodeGroup[N]]":
+        groups_by_node: Dict[N, str] = {node: grouper(node) for node in self}
+        groups: Dict[str, Set[N]] = defaultdict(set)
+        node_groups: Dict[str, NodeGroup[N]] = {}
+        graph = CrawlGraph()
+        for node, group in groups_by_node.items():
+            groups[group].add(node)
+        for group, members in groups.items():
+            ng = NodeGroup(members, name=group)
+            graph.add_node(ng)
+            node_groups[group] = ng
+        for from_node, to_node in self.edges:
+            from_group = node_groups[groups_by_node[from_node]]
+            to_group = node_groups[groups_by_node[to_node]]
+            if from_group != to_group and not graph.has_edge(from_group, to_group):
+                graph.add_edge(from_group, to_group)
+        return graph
+
 
 class Topology(Command):
     name = "topology"
@@ -69,12 +111,41 @@ class Topology(Command):
     def __init_arguments__(self, parser: ArgumentParser):
         parser.add_argument("CRAWL_DB_FILE", type=str,
                             help="path to the crawl database")
+        parser.add_argument("--group-by",
+                            "-g",
+                            default="ip",
+                            choices=["ip", "city", "country", "continent"],
+                            help="grouping of nodes (default: %(default)s)")
 
     def run(self, args):
-        graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE))
-        if len(graph) == 0:
+        raw_graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE))
+        if len(raw_graph) == 0:
             sys.stderr.write("Error: The crawl contains no nodes!\n")
             return 1
+        elif args.group_by == "ip":
+            graph = raw_graph
+        else:
+            if args.group_by == "city":
+                def grouper(n: CrawledNode) -> str:
+                    loc = n.get_location()
+                    if loc is None:
+                        return "Unknown City"
+                    return loc.city
+            elif args.group_by == "country":
+                def grouper(n: CrawledNode) -> str:
+                    loc = n.get_location()
+                    if loc is None:
+                        return "??"
+                    return loc.country_code
+            elif args.group_by == "continent":
+                def grouper(n: CrawledNode) -> str:
+                    loc = n.get_location()
+                    if loc is None:
+                        return "??"
+                    return loc.continent_code
+            else:
+                raise NotImplementedError(f"TODO: Implement support for --group-by={args.group_by}")
+            graph = raw_graph.group_by(grouper)
         # graph.to_dot().save("graph.dot")
         graph.prune()
         if len(graph) == 0:
@@ -82,5 +153,9 @@ class Topology(Command):
                              "components\n")
             return 1
         for node, rank in graph.pagerank().items():
-            print(f"[{node.ip!s}]:{node.port}\t{rank}")
+            if isinstance(node, NodeGroup):
+                print(f"{node.name}\t{rank}")
+            else:
+                print(f"[{node.ip!s}]:{node.port}\t{rank}")
+        print(f"Edge Connectivity: {nx.edge_connectivity(graph)}")
         return 0
