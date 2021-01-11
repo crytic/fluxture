@@ -2,7 +2,7 @@ import asyncio
 import sys
 import traceback
 from abc import ABCMeta
-from argparse import ArgumentParser, FileType, Namespace
+from argparse import ArgumentParser, Namespace
 from asyncio import ensure_future, Future
 from collections import deque
 from typing import Deque, Dict, FrozenSet, Generic, Iterable, List, Optional
@@ -10,7 +10,7 @@ from typing import Deque, Dict, FrozenSet, Generic, Iterable, List, Optional
 from .blockchain import Blockchain, BLOCKCHAINS
 from .crawl_schema import Crawl, CrawlDatabase, DatabaseCrawl, N
 from .fluxture import Command
-from .geolocation import GeoIP2Error, GeoIP2Locator, Geolocator, to_kml
+from .geolocation import GeoIP2Error, GeoIP2Locator, Geolocator
 
 
 class Crawler(Generic[N], metaclass=ABCMeta):
@@ -133,24 +133,3 @@ class CrawlCommand(Command):
         else:
             with geo:
                 crawl()
-
-
-class ToKML(Command):
-    name = "kml"
-    help = "export a KML file visualizing the crawled data"
-
-    def __init_arguments__(self, parser: ArgumentParser):
-        parser.add_argument("CRAWL_DB_FILE", type=str,
-                            help="path to the crawl database")
-        parser.add_argument("KML_FILE", type=FileType("w"),
-                            help="path to which to save the KML, or '-' for STDOUT (the default)")
-
-    def run(self, args):
-        with CrawlDatabase(args.CRAWL_DB_FILE) as db:
-            args.KML_FILE.write(to_kml(
-                table=db.locations,
-                doc_id=f"{args.CRAWL_DB_FILE}_IPs",
-                doc_name=f"{args.CRAWL_DB_FILE} IPs",
-                doc_description=f"Geolocalized IPs from crawl {args.CRAWL_DB_FILE}",
-                edges=lambda edge: (e.to_node.ip for e in db.edges.select(from_node=edge.rowid).fetchall())
-            ).to_string(prettyprint=True))
