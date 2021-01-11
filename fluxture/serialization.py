@@ -118,8 +118,8 @@ class FixedSize(Protocol):
 class IPv6Address(ipaddress.IPv6Address, AbstractPackable):
     num_bytes: int = 16
 
-    def __init__(self, address: Union[str, bytes, ipaddress.IPv6Address, ipaddress.IPv4Address]):
-        if isinstance(address, str) or isinstance(address, bytes):
+    def __init__(self, address: Union[str, bytes, int, ipaddress.IPv6Address, ipaddress.IPv4Address]):
+        if isinstance(address, str) or isinstance(address, bytes) or isinstance(address, int):
             address = ipaddress.ip_address(address)
         if isinstance(address, ipaddress.IPv4Address):
             # convert ip4 to rfc 3056 IPv6 6to4 address

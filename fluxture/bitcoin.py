@@ -10,11 +10,16 @@ import fluxture.structures
 
 from .blockchain import Blockchain, get_public_ip, Node
 from .messaging import BinaryMessage
-from . import serialization
 from .serialization import ByteOrder, P, UnpackError
+from .shodan import SearchQuery
+from . import serialization
 
 
 BITCOIN_MAINNET_MAGIC = b"\xf9\xbe\xb4\xd9"
+
+
+SearchQuery.register(name="BitcoinNode", query="port:8333")
+SearchQuery.register(name="BitcoinMiner", query="antminer")
 
 
 B = TypeVar('B', bound="BitcoinMessage")
