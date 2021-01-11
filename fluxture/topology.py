@@ -1,7 +1,9 @@
 import sys
 from argparse import ArgumentParser
 from collections import defaultdict, OrderedDict
-from typing import Callable, Dict, FrozenSet, Generic, Hashable, Optional, OrderedDict as OrderedDictType, Set, TypeVar
+from typing import (
+    Callable, Dict, FrozenSet, Generic, Hashable, Optional, OrderedDict as OrderedDictType, Set, TypeVar, Union
+)
 
 import graphviz
 import networkx as nx
@@ -82,14 +84,14 @@ class CrawlGraph(nx.DiGraph, Generic[N]):
                 to_remove |= connected_component
         self.remove_nodes_from(to_remove)
 
-    def pagerank(self) -> OrderedDictType[CrawledNode, float]:
+    def pagerank(self) -> OrderedDictType[N, float]:
         return OrderedDict(sorted(nx.pagerank(self).items(), key=lambda item: item[1], reverse=True))
 
-    def group_by(self, grouper: Callable[[N], str]) -> "CrawlGraph[NodeGroup[N]]":
+    def group_by(self, grouper: Callable[[N], str]) -> "GroupedCrawlGraph[N]":
         groups_by_node: Dict[N, str] = {node: grouper(node) for node in self}
         groups: Dict[str, Set[N]] = defaultdict(set)
         node_groups: Dict[str, NodeGroup[N]] = {}
-        graph = CrawlGraph()
+        graph = GroupedCrawlGraph(self)
         for node, group in groups_by_node.items():
             groups[group].add(node)
         for group, members in groups.items():
@@ -102,6 +104,19 @@ class CrawlGraph(nx.DiGraph, Generic[N]):
             if from_group != to_group and not graph.has_edge(from_group, to_group):
                 graph.add_edge(from_group, to_group)
         return graph
+
+
+class GroupedCrawlGraph(CrawlGraph[NodeGroup[N]], Generic[N]):
+    def __init__(self, parent: CrawlGraph[N]):
+        super().__init__()
+        self.parent: CrawlGraph[N] = parent
+
+    def grouped_pagerank(self) -> OrderedDictType[NodeGroup[N], float]:
+        parent_ranks = self.parent.pagerank()
+        ranks = {
+            group: sum(parent_ranks[node] for node in group) for group in self.nodes
+        }
+        return OrderedDict(sorted(ranks.items(), key=lambda item: item[1], reverse=True))
 
 
 class Topology(Command):
@@ -124,6 +139,7 @@ class Topology(Command):
             return 1
         elif args.group_by == "ip":
             graph = raw_graph
+            page_rank: OrderedDictType[Union[CrawledNode, NodeGroup[CrawledNode]], float] = graph.pagerank()
         else:
             if args.group_by == "city":
                 def grouper(n: CrawledNode) -> str:
@@ -146,13 +162,14 @@ class Topology(Command):
             else:
                 raise NotImplementedError(f"TODO: Implement support for --group-by={args.group_by}")
             graph = raw_graph.group_by(grouper)
+            page_rank = graph.grouped_pagerank()
         # graph.to_dot().save("graph.dot")
         graph.prune()
         if len(graph) == 0:
             sys.stderr.write("Error: The crawl is insufficient; all of the nodes are in their own connected "
                              "components\n")
             return 1
-        for node, rank in graph.pagerank().items():
+        for node, rank in page_rank.items():
             if isinstance(node, NodeGroup):
                 print(f"{node.name}\t{rank}")
             else:
