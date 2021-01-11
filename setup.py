@@ -12,7 +12,7 @@ setup(
     install_requires=[
         'fastkml==0.11',
         'geoip2==4.1.0',
-        'lxml==4.6.1',
+        'lxml==4.6.2',
         'six>=1.5',
         'tqdm==4.48.0',
     ],
