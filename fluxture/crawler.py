@@ -98,6 +98,10 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                 futures.extend(ensure_future(self._crawl_node(node)) for node in nodes_to_crawl)
                 miner_checks.extend(ensure_future(self._check_miner(node)) for node in nodes_to_crawl)
 
+        for miner in await self.blockchain.get_miners():
+            if miner not in self.crawl:
+                self.crawl.set_miner(miner, Miner.MINER)
+
         for node in self.nodes.values():
             if node.is_running:
                 node.terminate()

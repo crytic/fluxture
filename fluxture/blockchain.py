@@ -130,3 +130,7 @@ class Blockchain(Generic[N], metaclass=ABCMeta):
     @abstractmethod
     async def is_miner(self, node: N) -> Miner:
         raise NotImplementedError()
+
+    @abstractmethod
+    async def get_miners(self) -> FrozenSet[N]:
+        raise NotImplementedError()

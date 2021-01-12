@@ -77,6 +77,14 @@ class Crawl(Generic[N], Sized):
         raise NotImplementedError()
 
     @abstractmethod
+    def __getitem__(self, node: N) -> CrawledNode:
+        raise NotImplementedError()
+
+    @abstractmethod
+    def get_node(self, node: N) -> CrawledNode:
+        raise NotImplementedError()
+
+    @abstractmethod
     def add_event(self, node: CrawledNode, event: str, description: str, timestamp: Optional[DateTime] = None):
         raise NotImplementedError()
 
@@ -110,10 +118,18 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
     def __contains__(self, node: N) -> bool:
         return self.db.nodes.select(ip=node.ip, port=node.port).fetchone() is not None
 
-    def get_node(self, node: N) -> CrawledNode:
+    @abstractmethod
+    def __getitem__(self, node: N) -> CrawledNode:
         try:
             return next(iter(self.db.nodes.select(ip=node.address, port=node.port)))
         except StopIteration:
+            pass
+        raise KeyError(node)
+
+    def get_node(self, node: N) -> CrawledNode:
+        try:
+            return self[node]
+        except KeyError:
             # this is a new node
             pass
         ret = CrawledNode(ip=node.address, port=node.port)

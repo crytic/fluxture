@@ -460,7 +460,7 @@ class Bitcoin(Blockchain[BitcoinNode]):
             if addr.addr.ip != node.address or addr.addr.port != node.port
         )
 
-    async def get_miners(self) -> KeysView[IPv6Address]:
+    async def get_miner_ips(self) -> KeysView[IPv6Address]:
         if self._miner_query_lock is None:
             self._miner_query_lock = asyncio.Lock()
         await self._miner_query_lock.acquire()
@@ -476,12 +476,15 @@ class Bitcoin(Blockchain[BitcoinNode]):
             self._miner_query_lock.release()
         return self._miners.keys()
 
+    async def get_miners(self) -> FrozenSet[BitcoinNode]:
+        return frozenset(BitcoinNode(ip) for ip in await self.get_miner_ips())
+
     async def is_miner(self, node: BitcoinNode) -> Miner:
         if self._miner_query_lock is None:
             self._miner_query_lock = asyncio.Lock()
         async with self._miner_query_lock:
             is_miner = self._miners is not None and self._finished_miners_query and node.address in self._miners
-        if is_miner or node.address in await self.get_miners():
+        if is_miner or node.address in await self.get_miner_ips():
             return Miner.MINER
         else:
             return Miner.UNKNOWN
