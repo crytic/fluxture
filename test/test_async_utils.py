@@ -6,7 +6,7 @@ from unittest import TestCase
 from fluxture.async_utils import iterator_to_async
 
 
-@iterator_to_async
+@iterator_to_async(poll_interval=0.24)
 def slow_iterator(n: int):
     for i in range(n):
         sleep(0.5)

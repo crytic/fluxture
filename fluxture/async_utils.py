@@ -1,6 +1,6 @@
 import asyncio
 from collections import deque
-from functools import wraps
+from functools import partial, wraps
 from threading import Condition, Lock, Thread
 from typing import Any, AsyncIterator, Callable, Deque, Dict, Generic, Iterable, Iterator, Optional, Tuple, TypeVar
 
@@ -13,7 +13,7 @@ class SyncIteratorWrapper(Generic[T]):
             to_wrap: Callable[..., Iterator[T]],
             args: Iterable[Any],
             kwargs: Dict[str, Any],
-            poll_interval: float = 0.1
+            poll_interval: float = 0.5
     ):
         self.wrapped: Callable[..., Iterator[T]] = to_wrap
         self.args: Tuple[Any, ...] = tuple(args)
@@ -53,9 +53,17 @@ class SyncIteratorWrapper(Generic[T]):
             await asyncio.sleep(self.poll_interval)
 
 
-def iterator_to_async(to_wrap: Callable[..., Iterator[T]]) -> Callable[..., AsyncIterator[T]]:
+def iterator_to_async(
+        to_wrap: Optional[Callable[..., Iterator[T]]] = None,
+        *,
+        poll_interval: float = 0.5
+) -> Callable[..., AsyncIterator[T]]:
     """Decorator to automatically convert a synchronous function that returns an iterator to be asynchronous"""
+    if to_wrap is None:
+        # this will happen if the user optionally passes a `poll_interval` argument
+        return partial(iterator_to_async, poll_interval=poll_interval)
+
     @wraps(to_wrap)
     def wrapper(*args, **kwargs):
-        return SyncIteratorWrapper(to_wrap, args, kwargs)
+        return SyncIteratorWrapper(to_wrap, args, kwargs, poll_interval=poll_interval)
     return wrapper
