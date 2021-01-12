@@ -7,7 +7,7 @@ from asyncio import ensure_future, Future
 from collections import deque
 from typing import Deque, Dict, FrozenSet, Generic, Iterable, List, Optional
 
-from .blockchain import Blockchain, BLOCKCHAINS
+from .blockchain import Blockchain, BLOCKCHAINS, Miner
 from .crawl_schema import Crawl, CrawlDatabase, DatabaseCrawl, N
 from .fluxture import Command
 from .geolocation import GeoIP2Error, GeoIP2Locator, Geolocator
@@ -43,12 +43,18 @@ class Crawler(Generic[N], metaclass=ABCMeta):
             self.crawl.set_neighbors(node, frozenset(neighbors))
             return frozenset(new_neighbors)
 
+    async def _check_miner(self, node: N):
+        is_miner = await self.blockchain.is_miner(node)
+        self.crawl.set_miner(node, is_miner)
+        return node, is_miner
+
     async def _crawl(self, seeds: Optional[Iterable[N]] = None):
         if seeds is None:
             seeds = self.blockchain.DEFAULT_SEEDS
         futures: List[Future] = []
         queue: Deque[N] = deque(seeds)
-        while futures or queue:
+        miner_checks: List[Future] = []
+        while futures or queue or miner_checks:
             print(f"Discovered {len(self.nodes)} nodes; crawled {len(self.crawl)}; "
                   f"crawling {len(futures)}; waiting to crawl {len(queue)}...")
             if futures:
@@ -63,6 +69,22 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                         print(result)
                     else:
                         queue.extend(result)
+            if miner_checks:
+                waiting_on = miner_checks
+                done, pending = await asyncio.wait(waiting_on, return_when=asyncio.FIRST_COMPLETED, timeout=0.5)
+                for result in await asyncio.gather(*done, return_exceptions=True):
+                    if isinstance(result, Exception):
+                        # TODO: Save the exception to the database
+                        # self.crawl.add_event(node, event="Exception", description=str(result))
+                        traceback.print_tb(result.__traceback__)
+                        print(result)
+                    else:
+                        node, is_miner = result
+                        if is_miner == Miner.MINER:
+                            print(f"Node {node} is a miner")
+                        elif is_miner == Miner.NOT_MINER:
+                            print(f"Node {node} is not a miner")
+                miner_checks = list(pending)
             new_nodes_to_crawl = min(self.max_connections - len(futures), len(queue))
             if new_nodes_to_crawl:
                 nodes_to_crawl = []
@@ -74,6 +96,7 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                         nodes_to_crawl.append(node)
                         self.nodes[node] = node
                 futures.extend(ensure_future(self._crawl_node(node)) for node in nodes_to_crawl)
+                miner_checks.extend(ensure_future(self._check_miner(node)) for node in nodes_to_crawl)
 
         for node in self.nodes.values():
             if node.is_running:

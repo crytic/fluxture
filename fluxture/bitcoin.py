@@ -4,22 +4,22 @@ from abc import ABC
 from hashlib import sha256
 from ipaddress import IPv4Address, IPv6Address
 from time import time as current_time
-from typing import AsyncIterator, Dict, FrozenSet, Generic, List, Optional, Tuple, Type, TypeVar, Union
+from typing import AsyncIterator, Dict, FrozenSet, Generic, KeysView, List, Optional, Tuple, Type, TypeVar, Union
 
 import fluxture.structures
 
-from .blockchain import Blockchain, get_public_ip, Node
+from .blockchain import Blockchain, get_public_ip, Miner, Node
 from .messaging import BinaryMessage
 from .serialization import ByteOrder, P, UnpackError
-from .shodan import SearchQuery
+from .shodan import get_api, SearchQuery, ShodanResult
 from . import serialization
 
 
 BITCOIN_MAINNET_MAGIC = b"\xf9\xbe\xb4\xd9"
 
 
-SearchQuery.register(name="BitcoinNode", query="port:8333")
-SearchQuery.register(name="BitcoinMiner", query="antminer")
+NODE_QUERY = SearchQuery.register(name="BitcoinNode", query="port:8333")
+MINER_QUERY = SearchQuery.register(name="BitcoinMiner", query="antminer")
 
 
 B = TypeVar('B', bound="BitcoinMessage")
@@ -447,6 +447,9 @@ class Bitcoin(Blockchain[BitcoinNode]):
         ("seed.bitcoinstats.com",),
         ("seed.btc.petertodd.org",)
     ))
+    _miner_query_lock: Optional[asyncio.Lock] = None
+    _miners: Optional[Dict[IPv6Address, ShodanResult]] = None
+    _finished_miners_query: bool = False
 
     async def get_neighbors(self, node: BitcoinNode) -> FrozenSet[BitcoinNode]:
         assert node.is_running
@@ -456,3 +459,29 @@ class Bitcoin(Blockchain[BitcoinNode]):
             for addr in neighbor_addrs.addresses
             if addr.addr.ip != node.address or addr.addr.port != node.port
         )
+
+    async def get_miners(self) -> KeysView[IPv6Address]:
+        if self._miner_query_lock is None:
+            self._miner_query_lock = asyncio.Lock()
+        await self._miner_query_lock.acquire()
+        if self._miners is None:
+            self._miners = {}
+            self._miner_query_lock.release()
+            async for miner in MINER_QUERY.run_async(get_api()):
+                async with self._miner_query_lock:
+                    self._miners[miner.ip] = miner
+            async with self._miner_query_lock:
+                self._finished_miners_query = True
+        else:
+            self._miner_query_lock.release()
+        return self._miners.keys()
+
+    async def is_miner(self, node: BitcoinNode) -> Miner:
+        if self._miner_query_lock is None:
+            self._miner_query_lock = asyncio.Lock()
+        async with self._miner_query_lock:
+            is_miner = self._miners is not None and self._finished_miners_query and node.address in self._miners
+        if is_miner or node.address in await self.get_miners():
+            return Miner.MINER
+        else:
+            return Miner.UNKNOWN

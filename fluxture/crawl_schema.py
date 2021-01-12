@@ -2,19 +2,13 @@ from abc import abstractmethod
 from ipaddress import IPv4Address, IPv6Address as IPv6AddressPython
 from typing import Callable, FrozenSet, Generic, Optional, Set, Sized, TypeVar, Union
 
-from .blockchain import Node
+from .blockchain import Miner, Node
 from .db import Cursor, Database, ForeignKey, Model, Table
 from .geolocation import Geolocation
-from .serialization import DateTime, IntEnum, IPv6Address
+from .serialization import DateTime, IPv6Address
 
 
 N = TypeVar("N", bound=Node)
-
-
-class Miner(IntEnum):
-    UNKNOWN = 0
-    MINER = 1
-    NOT_MINER = 2
 
 
 class CrawledNode(Model["CrawlDatabase"]):
@@ -98,6 +92,10 @@ class Crawl(Generic[N], Sized):
     def set_neighbors(self, node: N, neighbors: FrozenSet[N]):
         raise NotImplementedError()
 
+    @abstractmethod
+    def set_miner(self, node: N, miner: Miner):
+        raise NotImplementedError()
+
 
 class DatabaseCrawl(Generic[N], Crawl[N]):
     def __init__(
@@ -152,6 +150,11 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
 
     def set_location(self, ip: IPv6Address, location: Geolocation):
         self.db.locations.append(location)
+
+    def set_miner(self, node: N, miner: Miner):
+        crawled_node = self.get_node(node)
+        crawled_node.is_miner = miner
+        self.db.nodes.update(crawled_node)
 
     def __len__(self) -> int:
         return len(self.db.nodes)

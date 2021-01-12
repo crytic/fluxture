@@ -108,11 +108,8 @@ class SearchQuery(Query):
         return (ShodanResult(**result) for result in api.search_cursor(self.query))
 
     @iterator_to_async(poll_interval=1.0)
-    def _run_async(self, api: Shodan):
+    def run_async(self, api: Shodan):
         return self.run(api)
-
-    async def run_async(self, api: Shodan) -> AsyncIterator[ShodanResult]:
-        return self._run_async(api)
 
     def __repr__(self):
         return f"{self.__class__.__name__}(name={self.name!r}, query={self.query!r}, callback={self.callback!r})"
@@ -126,7 +123,7 @@ def save_keychain_api_key(api_key: str):
     keyring.set_password(KEYRING_NAME, "shodan_api_key", api_key)
 
 
-def get_api(api_key: Optional[str]) -> Shodan:
+def get_api(api_key: Optional[str] = None) -> Shodan:
     keychain_key = get_keychain_api_key()
     if api_key is None:
         api_key = keychain_key

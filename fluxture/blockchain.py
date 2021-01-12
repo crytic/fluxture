@@ -8,6 +8,12 @@ from .messaging import Message
 from . import serialization
 
 
+class Miner(serialization.IntEnum):
+    UNKNOWN = 0
+    MINER = 1
+    NOT_MINER = 2
+
+
 def get_public_ip() -> Union[IPv4Address, IPv6Address]:
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     s.connect(("8.8.8.8", 80))
@@ -119,4 +125,8 @@ class Blockchain(Generic[N], metaclass=ABCMeta):
 
     @abstractmethod
     async def get_neighbors(self, node: N) -> FrozenSet[N]:
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def is_miner(self, node: N) -> Miner:
         raise NotImplementedError()
