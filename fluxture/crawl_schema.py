@@ -5,15 +5,22 @@ from typing import Callable, FrozenSet, Generic, Optional, Set, Sized, TypeVar, 
 from .blockchain import Node
 from .db import Cursor, Database, ForeignKey, Model, Table
 from .geolocation import Geolocation
-from .serialization import DateTime, IPv6Address
+from .serialization import DateTime, IntEnum, IPv6Address
 
 
 N = TypeVar("N", bound=Node)
 
 
+class Miner(IntEnum):
+    UNKNOWN = 0
+    MINER = 1
+    NOT_MINER = 2
+
+
 class CrawledNode(Model["CrawlDatabase"]):
     ip: IPv6Address
     port: int
+    is_miner: Miner
 
     def __hash__(self):
         return hash((self.ip, self.port))
