@@ -3,7 +3,7 @@ from time import sleep
 from typing import List, Tuple
 from unittest import TestCase
 
-from fluxture.async_utils import iterator_to_async
+from fluxture.async_utils import iterator_to_async, sync_to_async
 
 
 @iterator_to_async(poll_interval=0.24)
@@ -42,6 +42,26 @@ async def test_slow_iterator(test: TestCase, n: int):
     test.assertTrue(has_time_after)
 
 
+@sync_to_async(poll_interval=0.25)
+def slow_function():
+    sleep(2.0)
+
+
+async def time_slow_function() -> float:
+    loop = asyncio.get_running_loop()
+    await slow_function()
+    return loop.time()
+
+
+async def test_slow_function(test: TestCase):
+    slow_func_end_time, sleep_time = await asyncio.gather(time_slow_function(), sleep_and_return_time(1.0))
+    # ensure that asyncio actually scheduled `sleep_and_return` before `time_slow_function`:
+    test.assertLessEqual(sleep_time, slow_func_end_time)
+
+
 class TestAsyncUtils(TestCase):
     def test_iterator_to_async(self):
         asyncio.run(test_slow_iterator(self, 10))
+
+    def test_sync_to_async(self):
+        asyncio.run(test_slow_function(self))
