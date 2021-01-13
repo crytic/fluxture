@@ -2,17 +2,28 @@ import sys
 from abc import ABC
 from argparse import ArgumentParser, Namespace
 from getpass import getpass
-from typing import Any, AsyncIterator, Callable, Dict, Iterator, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, Optional, Tuple
 
 import keyring
 from shodan import APIError, Shodan
 
 from .async_utils import iterator_to_async
+from .db import Model
 from .fluxture import Command
-from .crawl_schema import IPv6Address
+from .serialization import DateTime, IPv6Address
 
 
 KEYRING_NAME: str = "fluxture"
+
+
+class HostInfo(Model):
+    ip: IPv6Address
+    isp: str
+    os: str
+    timestamp: DateTime
+
+    def __hash__(self):
+        return hash(self.ip)
 
 
 def prompt(

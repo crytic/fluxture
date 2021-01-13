@@ -6,6 +6,7 @@ from .blockchain import Miner, Node
 from .db import Cursor, Database, ForeignKey, Model, Table
 from .geolocation import Geolocation
 from .serialization import DateTime, IPv6Address
+from .shodan import HostInfo
 
 
 N = TypeVar("N", bound=Node)
@@ -66,6 +67,7 @@ class CrawlDatabase(Database):
     events: Table[CrawlEvent]
     locations: Table[Geolocation]
     edges: Table[Edge]
+    hosts: Table[HostInfo]
 
     def __init__(self, path: str = ":memory:"):
         super().__init__(path)
@@ -102,6 +104,10 @@ class Crawl(Generic[N], Sized):
 
     @abstractmethod
     def set_miner(self, node: N, miner: Miner):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def set_host_info(self, host_info: HostInfo):
         raise NotImplementedError()
 
 
@@ -171,6 +177,10 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
         crawled_node = self.get_node(node)
         crawled_node.is_miner = miner
         self.db.nodes.update(crawled_node)
+
+    @abstractmethod
+    def set_host_info(self, host_info: HostInfo):
+        self.db.hosts.append(host_info)
 
     def __len__(self) -> int:
         return len(self.db.nodes)
