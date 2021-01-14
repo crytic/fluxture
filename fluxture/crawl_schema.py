@@ -6,10 +6,19 @@ from .blockchain import Miner, Node
 from .db import Cursor, Database, ForeignKey, Model, Table
 from .geolocation import Geolocation
 from .serialization import DateTime, IPv6Address
-from .shodan import HostInfo
 
 
 N = TypeVar("N", bound=Node)
+
+
+class HostInfo(Model):
+    ip: IPv6Address
+    isp: str
+    os: str
+    timestamp: DateTime
+
+    def __hash__(self):
+        return hash(self.ip)
 
 
 class CrawledNode(Model["CrawlDatabase"]):
@@ -124,7 +133,6 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
     def __contains__(self, node: N) -> bool:
         return self.db.nodes.select(ip=node.ip, port=node.port).fetchone() is not None
 
-    @abstractmethod
     def __getitem__(self, node: N) -> CrawledNode:
         try:
             return next(iter(self.db.nodes.select(ip=node.address, port=node.port)))
@@ -178,7 +186,6 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
         crawled_node.is_miner = miner
         self.db.nodes.update(crawled_node)
 
-    @abstractmethod
     def set_host_info(self, host_info: HostInfo):
         self.db.hosts.append(host_info)
 

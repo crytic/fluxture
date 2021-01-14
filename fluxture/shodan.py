@@ -2,28 +2,21 @@ import sys
 from abc import ABC
 from argparse import ArgumentParser, Namespace
 from getpass import getpass
-from typing import Any, Callable, Dict, Iterator, Optional, Tuple
+from time import sleep
+from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple
 
 import keyring
 from shodan import APIError, Shodan
 
-from .async_utils import iterator_to_async
-from .db import Model
+from .async_utils import iterator_to_async, sync_to_async
+from .bitcoin import Node
+from .crawler import Crawler, CrawlListener
+from .crawl_schema import HostInfo
 from .fluxture import Command
 from .serialization import DateTime, IPv6Address
 
 
 KEYRING_NAME: str = "fluxture"
-
-
-class HostInfo(Model):
-    ip: IPv6Address
-    isp: str
-    os: str
-    timestamp: DateTime
-
-    def __hash__(self):
-        return hash(self.ip)
 
 
 def prompt(
@@ -44,25 +37,30 @@ def prompt(
             return False
 
 
-class ShodanResult:
+class ShodanResult(HostInfo):
     def __init__(self, **kwargs):
+        if "timestamp" in kwargs:
+            timestamp: DateTime = DateTime.fromisoformat(kwargs["timestamp"])
+        else:
+            timestamp = DateTime()
         if "ip" in kwargs:
-            self.ip: IPv6Address = IPv6Address(kwargs["ip"])
+            ip: IPv6Address = IPv6Address(kwargs["ip"])
         else:
             raise ValueError(f"Shodan Result does not contain an IP address: {kwargs!r}")
         if "isp" in kwargs:
-            self.isp: Optional[str] = kwargs["isp"]
+            isp: Optional[str] = kwargs["isp"]
         else:
-            self.isp = None
+            isp = None
         if "ip_str" in kwargs:
             self.ip_str: Optional[str] = kwargs["ip_str"]
         else:
             self.ip_str = None
         if "os" in kwargs:
-            self.os: Optional[str] = kwargs["os"]
+            os: Optional[str] = kwargs["os"]
         else:
-            self.os = None
+            os = None
         self.result: Dict[str, Any] = kwargs
+        super().__init__(ip=ip, isp=isp, os=os, timestamp=timestamp)
 
     def __getattr__(self, item):
         if item in self.result:
@@ -173,7 +171,7 @@ class ActiveNodes(ShodanCommand, Command):
             print(str(result))
 
 
-class HostInfo(ShodanCommand, Command):
+class HostInfoCommand(ShodanCommand, Command):
     name = "hostinfo"
     help = "get information about IP addresses from Shodan"
 
@@ -193,3 +191,50 @@ class HostInfo(ShodanCommand, Command):
                 sys.stderr.write(str(e))
                 sys.stderr.write("\n")
                 sys.stderr.flush()
+
+
+class HostInfoFetcher(CrawlListener):
+    def __init__(self):
+        self.batch_size: int = 100
+        self.node_queue: list[Node] = []
+
+    @staticmethod
+    @sync_to_async(poll_interval=0.5)
+    def get_host_info(ips: Iterable[IPv6Address]) -> Iterable[HostInfo]:
+        max_delay = 10.0
+        next_delay = 0.5
+        while True:
+            try:
+                info = get_api().host(map(str, ips))
+                print(repr(info))
+                exit(0)
+            except APIError as e:
+                if "rate limit reached" in str(e):
+                    sleep(next_delay)
+                    next_delay = min(max_delay, next_delay * 1.5)
+        # TODO: Check for rate limiting
+        return (ShodanResult(**get_api().host(str(ip))) for ip in ips)
+
+    async def process_nodes(self, crawler: Crawler, finalize: bool = False):
+        if finalize:
+            batch_size = len(self.node_queue)
+        else:
+            batch_size = self.batch_size
+        while len(self.node_queue) >= batch_size > 0:
+            to_process = self.node_queue[:batch_size]
+            self.node_queue = self.node_queue[batch_size:]
+            for info in await HostInfoFetcher.get_host_info((p.address for p in to_process)):
+                crawler.crawl.set_host_info(info)
+
+    async def on_crawl_node(self, crawler: Crawler, node: Node):
+        self.node_queue.append(node)
+        await self.process_nodes(crawler)
+        #info = await HostInfoFetcher.get_host_info(node.address)
+        #print(info)
+
+    async def on_miner(self, crawler: Crawler, node: Node, miner):
+        self.node_queue.append(node)
+        await self.process_nodes(crawler)
+
+    async def on_complete(self, crawler: Crawler):
+        await self.process_nodes(crawler, finalize=True)

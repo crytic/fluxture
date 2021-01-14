@@ -448,6 +448,10 @@ class DateTime(UInt64):
         else:
             return UInt64.__new__(cls, *args)
 
+    @staticmethod
+    def fromisoformat(timestamp: str) -> "DateTime":
+        return DateTime(int(datetime.datetime.fromisoformat(timestamp).timestamp() + 0.5))
+
     @property
     def date(self) -> datetime.datetime:
         return datetime.datetime.fromtimestamp(float(self))
