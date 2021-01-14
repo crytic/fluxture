@@ -16,6 +16,17 @@ class StructMeta(ABCMeta, Generic[F]):
 
     def __init__(cls, name, bases, clsdict):
         fields = OrderedDict()
+        field_sources = {}
+        for base in bases:
+            if isinstance(base, StructMeta):
+                # this will happen if a Struct is extending another Struct
+                # so inherit all of the superclass's fields
+                for field_name, field_type in base.FIELDS.items():
+                    if field_name in fields:
+                        raise TypeError(f"{name} inherits field {field_name} from both {base.__name__} and "
+                                        f"{field_sources[field_name]}")
+                    field_sources[field_name] = base
+                    fields[field_name] = field_type
         if "non_serialized" in clsdict:
             non_serialized = set(clsdict["non_serialized"])
         else:
@@ -23,7 +34,9 @@ class StructMeta(ABCMeta, Generic[F]):
         non_serialized |= {"FIELDS", "non_serialized"}
         if "__annotations__" in clsdict:
             for field_name, field_type in clsdict["__annotations__"].items():
-                if field_name not in non_serialized:
+                if field_name in field_sources:
+                    raise TypeError(f"{name} cannot redefine field {field_name} from {field_sources[field_name]}")
+                elif field_name not in non_serialized:
                     fields[field_name] = field_type
         super().__init__(name, bases, clsdict)
         cls.validate_fields(fields)
@@ -54,7 +67,10 @@ class Struct(Generic[F], metaclass=StructMeta[F]):
                     raise ValueError(f"Missing argument for {name} in {self.__class__}")
             unsatisfied_fields = unsatisfied_fields[:len(args)]
         for name, value in itertools.chain(kwargs.items(), zip(unsatisfied_fields, args)):
-            if isinstance(value, self.__class__.FIELDS[name]):
+            if name not in self.__class__.FIELDS:
+                raise TypeError(f"{self.__class__.__name__}.__init__() got an unexpected keyword argument '{name}'. "
+                                f"Valid arguments are: {', '.join(self.__class__.FIELDS.keys())}")
+            elif isinstance(value, self.__class__.FIELDS[name]):
                 # the value was already passed as the correct type
                 setattr(self, name, value)
             else:
