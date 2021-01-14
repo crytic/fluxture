@@ -25,8 +25,9 @@ class StructMeta(ABCMeta, Generic[F]):
                     if field_name in fields:
                         raise TypeError(f"{name} inherits field {field_name} from both {base.__name__} and "
                                         f"{field_sources[field_name]}")
-                    field_sources[field_name] = base
-                    fields[field_name] = field_type
+                    elif hasattr(base, "non_serialized") and field_name not in getattr(base, "non_serialized"):
+                        field_sources[field_name] = base
+                        fields[field_name] = field_type
         if "non_serialized" in clsdict:
             non_serialized = set(clsdict["non_serialized"])
         else:
