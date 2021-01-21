@@ -3,7 +3,7 @@ from ipaddress import IPv4Address, IPv6Address as IPv6AddressPython
 from typing import Callable, FrozenSet, Generic, Optional, Set, Sized, TypeVar, Union
 
 from .blockchain import Node
-from .db import Cursor, Database, ForeignKey, Model, Table
+from .db import Cursor, Database, ForeignKey, primary_key, Model, Table
 from .geolocation import Geolocation
 from .serialization import DateTime, IPv6Address
 
@@ -53,6 +53,12 @@ class Edge(Model):
     timestamp: DateTime
 
 
+class PendingTransaction(Model):
+    timestamp: DateTime
+    tx_hash: bytes
+    on_node: ForeignKey["nodes", CrawledNode]
+
+
 class CrawlEvent(Model):
     node: ForeignKey["nodes", CrawledNode]
     timestamp: DateTime
@@ -65,6 +71,7 @@ class CrawlDatabase(Database):
     events: Table[CrawlEvent]
     locations: Table[Geolocation]
     edges: Table[Edge]
+    pending_transactions: Table[PendingTransaction]
 
     def __init__(self, path: str = ":memory:"):
         super().__init__(path)
@@ -89,6 +96,10 @@ class Crawl(Generic[N], Sized):
 
     @abstractmethod
     def set_neighbors(self, node: N, neighbors: FrozenSet[N]):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def set_pending_transactions(self, node: N, transactions: FrozenSet[bytes]):
         raise NotImplementedError()
 
 
@@ -142,6 +153,10 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
                 )
                 for neighbor in neighbors
             ])
+
+    def set_pending_transactions(self, node: N, transactions: FrozenSet[bytes]):
+        for t in transactions:
+            self.db.pending_transactions.append(PendingTransaction(on_node=self.get_node(node), tx_hash=t, timestamp=DateTime()))
 
     def set_location(self, ip: IPv6Address, location: Geolocation):
         self.db.locations.append(location)
