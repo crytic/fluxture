@@ -1,2 +1,17 @@
-# We need to import these modules so that their commands/plugins auto-register:
-from . import bitcoin, crawler
+from inspect import isclass
+from pkgutil import iter_modules
+from pathlib import Path
+from importlib import import_module
+
+# Automatically load all modules in the `fluxture` package,
+# so all Fluxture plugins will auto-register themselves:
+package_dir = Path(__file__).resolve().parent
+for (_, module_name, _) in iter_modules([str(package_dir)]):
+    # import the module and iterate through its attributes
+    module = import_module(f"{__name__}.{module_name}")
+    for attribute_name in dir(module):
+        attribute = getattr(module, attribute_name)
+
+        if isclass(attribute):
+            # Add the class to this package's variables
+            globals()[attribute_name] = attribute

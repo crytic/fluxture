@@ -369,6 +369,7 @@ class Table(Generic[M]):
             distinct: bool = False,
             limit: Optional[int] = None,
             order_by: Optional[str] = None,
+            order_direction: str = "ASC",
             **kwargs
     ) -> Cursor[M]:
         params = []
@@ -382,7 +383,7 @@ class Table(Generic[M]):
         else:
             clauses = []
         if order_by is not None:
-            clauses.append(" ORDER BY ?")
+            clauses.append(f" ORDER BY ? {order_direction}")
             params.append(order_by)
         if limit is not None:
             clauses.append(" LIMIT ?")

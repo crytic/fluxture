@@ -15,21 +15,21 @@ class CrawledNode(Model["CrawlDatabase"]):
     ip: IPv6Address
     port: int
 
+    def __hash__(self):
+        return hash((self.ip, self.port))
+
     def get_events(self) -> Cursor["CrawlEvent"]:
         return self.db.events.select(node=self.rowid, order_by="timestamp DESC")
 
     def get_location(self) -> Optional[Geolocation]:
-        try:
-            return next(iter(self.db[Geolocation].select(ip=self.ip, order_by="timestamp DESC")))
-        except StopIteration:
-            return None
+        return self.db.locations.select(ip=self.ip, order_by="timestamp DESC", limit=1).fetchone()
 
     def last_crawled(self) -> Optional[DateTime]:
         max_edge = Cursor(
             self.db.edges,
             "SELECT * FROM edges WHERE from_node=? AND "
             "timestamp=(SELECT max(timestamp) FROM edges WHERE from_node=?) LIMIT=1",
-            (self.ip, self.ip)
+            (self.rowid, self.rowid)
         ).fetchone()
         if max_edge is None:
             return None
@@ -37,12 +37,12 @@ class CrawledNode(Model["CrawlDatabase"]):
 
     def get_latest_edges(self) -> Set["CrawledNode"]:
         return {
-            edge.to_node
+            edge.to_node.row
             for edge in Cursor(
                     self.db.edges,
                     "SELECT * FROM edges WHERE from_node=? AND "
                     "timestamp=(SELECT max(timestamp) FROM edges WHERE from_node=?)",
-                    (self.ip, self.ip)
+                    (self.rowid, self.rowid)
             )
         }
 
@@ -80,6 +80,10 @@ class CrawlDatabase(Database):
 class Crawl(Generic[N], Sized):
     @abstractmethod
     def __contains__(self, node: N) -> bool:
+        raise NotImplementedError()
+
+    @abstractmethod
+    def add_event(self, node: CrawledNode, event: str, description: str, timestamp: Optional[DateTime] = None):
         raise NotImplementedError()
 
     @abstractmethod
@@ -121,6 +125,16 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
         ret = CrawledNode(ip=node.address, port=node.port)
         self.db.nodes.append(ret)
         return ret
+
+    def add_event(self, node: CrawledNode, event: str, description: str, timestamp: Optional[DateTime] = None):
+        if timestamp is None:
+            timestamp = DateTime()
+        self.db.events.append(CrawlEvent(
+            node=node.rowid,
+            event=event,
+            description=description,
+            timestamp=timestamp
+        ))
 
     def get_neighbors(self, node: N) -> FrozenSet[N]:
         return frozenset({
