@@ -67,7 +67,7 @@ class BitcoinMessage(BinaryMessage, ABC):
 
     def __init_subclass__(cls, **kwargs):
         if cls.command is None:
-            raise TypeError(f"{cls.__name__} extends BitcoinMessage but does not speficy a command string!")
+            raise TypeError(f"{cls.__name__} extends BitcoinMessage but does not specify a command string!")
         elif cls.command in MESSAGES_BY_COMMAND:
             raise TypeError(f"The command {cls.command} is already registered to message class "
                             f"{MESSAGES_BY_COMMAND[cls.command]}")
@@ -287,6 +287,10 @@ class GetAddrMessage(BitcoinMessage):
     command = "getaddr"
 
 
+class MempoolMessage(BitcoinMessage):
+    command = "mempool"
+
+
 class AbstractList(list, Generic[P], List[P], serialization.AbstractPackable, ABC):
     ELEMENT_TYPE: Type[P]
 
@@ -391,6 +395,15 @@ class BitcoinNode(Node):
         raise BitcoinError(f"Node {self.address}:{self.port} closed the connection before replying to our "
                            "GetAddr message")
 
+    async def get_mempool(self) -> InvMessage:
+        async with self:
+            await self.send_message(MempoolMessage())
+            async for msg in self.run():
+                if isinstance(msg, InvMessage):
+                    return [i.hash for i in msg.inventories]
+        raise BitcoinError(f"Node {self.address}:{self.port} closed the connection before replying to our "
+                           "MempoolMessage message")
+
     async def run(self) -> AsyncIterator["BitcoinMessage"]:
         async with self:
             await self.connect()
@@ -451,3 +464,8 @@ class Bitcoin(Blockchain[BitcoinNode]):
             for addr in neighbor_addrs.addresses
             if addr.addr.ip != node.address or addr.addr.port != node.port
         )
+
+    async def get_pending_transactions(self, node: BitcoinNode) -> FrozenSet[bytes]:
+        assert node.is_running
+        mempool = await node.get_mempool()
+        return frozenset(mempool)

@@ -41,6 +41,7 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                     neighbors.append(neighbor)
                     new_neighbors.add(neighbor)
             self.crawl.set_neighbors(node, frozenset(neighbors))
+            self.crawl.set_pending_transactions(node, await self.blockchain.get_pending_transactions(node))
             return frozenset(new_neighbors)
 
     async def _crawl(self, seeds: Optional[Iterable[N]] = None):

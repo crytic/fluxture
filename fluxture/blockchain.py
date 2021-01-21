@@ -120,3 +120,7 @@ class Blockchain(Generic[N], metaclass=ABCMeta):
     @abstractmethod
     async def get_neighbors(self, node: N) -> FrozenSet[N]:
         raise NotImplementedError()
+
+    @abstractmethod
+    async def get_pending_transactions(self, node: N) -> FrozenSet[bytes]:  # TODO: Figure out return value
+        raise NotImplementedError()
