@@ -2,13 +2,14 @@ from argparse import ArgumentParser, FileType
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from math import pi, sin
-from typing import Dict, Iterable, List, Optional, OrderedDict
+from typing import Dict, Iterable, List, Optional, OrderedDict, Set
 
-from fastkml import IconStyle,  kml, LineStyle, Placemark, Style
+from fastkml import IconStyle, kml, LineStyle, Placemark, Style
 from fastkml.geometry import Geometry, LineString, Point
 from shapely.geometry import MultiPoint
 from tqdm import tqdm
 
+from .blockchain import Miner
 from .crawler import CrawlDatabase
 from .crawl_schema import CrawledNode
 from .fluxture import Command
@@ -52,11 +53,12 @@ class KMLGraphNode(ABC, Location):
 
 
 class KMLGeolocation(KMLGraphNode):
-    def __init__(self, location: Geolocation, db: CrawlDatabase):
+    def __init__(self, location: Geolocation, db: CrawlDatabase, is_miner: bool = False):
         self.location: Geolocation = location
         self.db: CrawlDatabase = db
         self.lat = location.lat
         self.lon = location.lon
+        self.is_miner: bool = is_miner
 
     def __eq__(self, other):
         return (isinstance(other, KMLGeolocation) and other.location.ip == self.location.ip) or super().__eq__(other)
@@ -73,15 +75,23 @@ class KMLGeolocation(KMLGraphNode):
                 if possible_nodes_by_port[port].last_crawled() >= possible_node.last_crawled():
                     continue
             possible_nodes_by_port[port] = possible_node
-        neighbors = {
-            self.db.locations.select(ip=neighbor.ip, limit=1).fetchone()
-            for node in possible_nodes_by_port.values()
-            for neighbor in node.get_latest_edges()
-        }
-        return (KMLGeolocation(loc, self.db) for loc in neighbors if loc is not None)
+        locations: Dict[Geolocation, Set[CrawledNode]] = defaultdict(set)
+        for node in possible_nodes_by_port.values():
+            for neighbor in node.get_latest_edges():
+                for loc in self.db.locations.select(ip=neighbor.ip, limit=1).fetchone():
+                    locations[loc].add(neighbor)
+        return (
+            KMLGeolocation(loc, self.db, is_miner=any(n.is_miner == Miner.MINER for n in nodes))
+            for loc, nodes in locations.items() if loc is not None
+        )
 
     def description(self) -> str:
-        return f"{self.location.ip!s}: {self.location.city} ({self.lat}°N, {self.lon}°E) @ {self.location.timestamp!s}"
+        if self.is_miner:
+            miner_str = f"Likely a Miner "
+        else:
+            miner_str = ""
+        return f"{miner_str}{self.location.ip!s}: {self.location.city} ({self.lat}°N, {self.lon}°E) @ " \
+               f"{self.location.timestamp!s}"
 
     def to_placemark(self, style: Optional[Style] = None) -> kml.Placemark:
         if style is None:
