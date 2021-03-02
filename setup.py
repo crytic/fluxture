@@ -22,6 +22,9 @@ setup(
         'six>=1.5',
         'tqdm~=4.48.0',
     ],
+    extras_require={
+        "dev": ["flake8", "pytest", "twine"]
+    },
     entry_points={
         'console_scripts': [
             'fluxture = fluxture.__main__:main'
