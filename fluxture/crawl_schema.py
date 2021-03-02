@@ -59,13 +59,13 @@ class CrawledNode(Model["CrawlDatabase"]):
 
 
 class Edge(Model):
-    from_node: ForeignKey["nodes", CrawledNode]
-    to_node: ForeignKey["nodes", CrawledNode]
+    from_node: ForeignKey["nodes", CrawledNode]  # noqa: F821
+    to_node: ForeignKey["nodes", CrawledNode]  # noqa: F821
     timestamp: DateTime
 
 
 class CrawlEvent(Model):
-    node: ForeignKey["nodes", CrawledNode]
+    node: ForeignKey["nodes", CrawledNode]  # noqa: F821
     timestamp: DateTime
     event: str
     description: str
