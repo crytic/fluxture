@@ -2,7 +2,7 @@ import asyncio
 import socket
 from abc import ABCMeta, abstractmethod
 from ipaddress import ip_address, IPv4Address, IPv6Address
-from typing import AsyncIterator, Dict, FrozenSet, Generic, Optional, Tuple, Type, TypeVar, Union
+from typing import AsyncIterator, Dict, FrozenSet, Generic, Iterable, Optional, Tuple, Type, TypeVar, Union
 
 from .messaging import Message
 from . import serialization
@@ -122,6 +122,11 @@ class Blockchain(Generic[N], metaclass=ABCMeta):
         if not hasattr(cls, "node_type") or cls.node_type is None:
             raise TypeError("Subclasses of `Blockchain` must define a `node_type`")
         BLOCKCHAINS[cls.name] = cls
+
+    @classmethod
+    @abstractmethod
+    def default_seeds(cls) -> Iterable[N]:
+        raise NotImplementedError()
 
     @abstractmethod
     async def get_neighbors(self, node: N) -> FrozenSet[N]:

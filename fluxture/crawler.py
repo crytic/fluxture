@@ -97,7 +97,7 @@ class Crawler(Generic[N], metaclass=ABCMeta):
 
     async def _crawl(self, seeds: Optional[Iterable[N]] = None):
         if seeds is None:
-            seeds = self.blockchain.DEFAULT_SEEDS
+            seeds = self.blockchain.default_seeds()
         futures: List[Future] = []
         queue: Deque[N] = deque(seeds)
         while futures or queue or self.listener_tasks:
