@@ -27,7 +27,7 @@ async def sleep_and_return_time(duration: float) -> float:
     return loop.time()
 
 
-async def test_slow_iterator(test: TestCase, n: int):
+async def slow_iterator_test(test: TestCase, n: int):
     slow_iterator_results, sleep_time = await asyncio.gather(slow_iterator_async(n), sleep_and_return_time(n / 2.0))
     expected = 0
     has_time_before = False
@@ -53,7 +53,7 @@ async def time_slow_function() -> float:
     return loop.time()
 
 
-async def test_slow_function(test: TestCase):
+async def slow_function_test(test: TestCase):
     slow_func_end_time, sleep_time = await asyncio.gather(time_slow_function(), sleep_and_return_time(1.0))
     # ensure that asyncio actually scheduled `sleep_and_return` before `time_slow_function`:
     test.assertLessEqual(sleep_time, slow_func_end_time)
@@ -61,7 +61,7 @@ async def test_slow_function(test: TestCase):
 
 class TestAsyncUtils(TestCase):
     def test_iterator_to_async(self):
-        asyncio.run(test_slow_iterator(self, 10))
+        asyncio.run(slow_iterator_test(self, 10))
 
     def test_sync_to_async(self):
-        asyncio.run(test_slow_function(self))
+        asyncio.run(slow_function_test(self))
