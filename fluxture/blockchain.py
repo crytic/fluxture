@@ -125,7 +125,7 @@ class Blockchain(Generic[N], metaclass=ABCMeta):
 
     @classmethod
     @abstractmethod
-    def default_seeds(cls) -> Iterable[N]:
+    async def default_seeds(cls) -> Iterable[N]:
         raise NotImplementedError()
 
     @abstractmethod

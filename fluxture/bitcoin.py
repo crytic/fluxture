@@ -439,22 +439,22 @@ async def collect_defaults(*args: Union[Tuple[str], Tuple[str, int]]) -> Tuple[B
 class Bitcoin(Blockchain[BitcoinNode]):
     name = "bitcoin"
     node_type = BitcoinNode
-    _DEFAULT_SEEDS: Optional[List[BitcoinNode]] = None
+    _DEFAULT_SEEDS: Optional[Tuple[BitcoinNode, ...]] = None
     _miner_query_lock: Optional[asyncio.Lock] = None
     _miners: Optional[Dict[IPv6Address, ShodanResult]] = None
     _finished_miners_query: bool = False
 
     @classmethod
-    def default_seeds(cls) -> List[BitcoinNode]:
+    async def default_seeds(cls) -> Tuple[BitcoinNode, ...]:
         if cls._DEFAULT_SEEDS is None:
-            cls._DEFAULT_SEEDS = list(asyncio.run(collect_defaults(
+            cls._DEFAULT_SEEDS = await collect_defaults(
                 ("dnsseed.bitcoin.dashjr.org",),
                 ("dnsseed.bluematt.me",),
                 ("seed.bitcoin.jonasschnelli.ch",),
                 ("seed.bitcoin.sipa.be",),
                 ("seed.bitcoinstats.com",),
                 ("seed.btc.petertodd.org",)
-            )))
+            )
         return cls._DEFAULT_SEEDS
 
     async def get_neighbors(self, node: BitcoinNode) -> FrozenSet[BitcoinNode]:
