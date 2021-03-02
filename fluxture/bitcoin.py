@@ -431,8 +431,11 @@ async def collect_addresses(url: str, port: int = 8333) -> Tuple[BitcoinNode, ..
 
 async def collect_defaults(*args: Union[Tuple[str], Tuple[str, int]]) -> Tuple[BitcoinNode, ...]:
     results = []
-    for result in await asyncio.gather(*(collect_addresses(*arg) for arg in args)):
-        results.extend(result)
+    for result in await asyncio.gather(*(collect_addresses(*arg) for arg in args), return_exceptions=True):
+        if isinstance(result, Exception):
+            print(f"Error connecting to seed: {result!s}")
+        else:
+            results.extend(result)
     return tuple(results)
 
 
