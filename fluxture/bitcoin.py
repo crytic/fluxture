@@ -4,17 +4,22 @@ from abc import ABC
 from hashlib import sha256
 from ipaddress import IPv4Address, IPv6Address
 from time import time as current_time
-from typing import AsyncIterator, Dict, FrozenSet, Generic, List, Optional, Tuple, Type, TypeVar, Union
+from typing import AsyncIterator, Dict, FrozenSet, Generic, KeysView, List, Optional, Tuple, Type, TypeVar, Union
 
 import fluxture.structures
 
-from .blockchain import Blockchain, get_public_ip, Node
+from .blockchain import Blockchain, get_public_ip, Miner, Node
 from .messaging import BinaryMessage
-from . import serialization
 from .serialization import ByteOrder, P, UnpackError
+from .shodan import get_api, SearchQuery, ShodanResult
+from . import serialization
 
 
 BITCOIN_MAINNET_MAGIC = b"\xf9\xbe\xb4\xd9"
+
+
+NODE_QUERY = SearchQuery.register(name="BitcoinNode", query="port:8333")
+MINER_QUERY = SearchQuery.register(name="BitcoinMiner", query="antminer")
 
 
 B = TypeVar('B', bound="BitcoinMessage")
@@ -426,22 +431,34 @@ async def collect_addresses(url: str, port: int = 8333) -> Tuple[BitcoinNode, ..
 
 async def collect_defaults(*args: Union[Tuple[str], Tuple[str, int]]) -> Tuple[BitcoinNode, ...]:
     results = []
-    for result in await asyncio.gather(*(collect_addresses(*arg) for arg in args)):
-        results.extend(result)
+    for result in await asyncio.gather(*(collect_addresses(*arg) for arg in args), return_exceptions=True):
+        if isinstance(result, Exception):
+            print(f"Error connecting to seed: {result!s}")
+        else:
+            results.extend(result)
     return tuple(results)
 
 
 class Bitcoin(Blockchain[BitcoinNode]):
     name = "bitcoin"
     node_type = BitcoinNode
-    DEFAULT_SEEDS = asyncio.run(collect_defaults(
-        ("dnsseed.bitcoin.dashjr.org",),
-        ("dnsseed.bluematt.me",),
-        ("seed.bitcoin.jonasschnelli.ch",),
-        ("seed.bitcoin.sipa.be",),
-        ("seed.bitcoinstats.com",),
-        ("seed.btc.petertodd.org",)
-    ))
+    _DEFAULT_SEEDS: Optional[Tuple[BitcoinNode, ...]] = None
+    _miner_query_lock: Optional[asyncio.Lock] = None
+    _miners: Optional[Dict[IPv6Address, ShodanResult]] = None
+    _finished_miners_query: bool = False
+
+    @classmethod
+    async def default_seeds(cls) -> Tuple[BitcoinNode, ...]:
+        if cls._DEFAULT_SEEDS is None:
+            cls._DEFAULT_SEEDS = await collect_defaults(
+                ("dnsseed.bitcoin.dashjr.org",),
+                ("dnsseed.bluematt.me",),
+                ("seed.bitcoin.jonasschnelli.ch",),
+                ("seed.bitcoin.sipa.be",),
+                ("seed.bitcoinstats.com",),
+                ("seed.btc.petertodd.org",)
+            )
+        return cls._DEFAULT_SEEDS
 
     async def get_neighbors(self, node: BitcoinNode) -> FrozenSet[BitcoinNode]:
         assert node.is_running
@@ -451,3 +468,32 @@ class Bitcoin(Blockchain[BitcoinNode]):
             for addr in neighbor_addrs.addresses
             if addr.addr.ip != node.address or addr.addr.port != node.port
         )
+
+    async def get_miner_ips(self) -> KeysView[IPv6Address]:
+        if self._miner_query_lock is None:
+            self._miner_query_lock = asyncio.Lock()
+        await self._miner_query_lock.acquire()
+        if self._miners is None:
+            self._miners = {}
+            self._miner_query_lock.release()
+            async for miner in MINER_QUERY.run_async(get_api()):
+                async with self._miner_query_lock:
+                    self._miners[miner.ip] = miner
+            async with self._miner_query_lock:
+                self._finished_miners_query = True
+        else:
+            self._miner_query_lock.release()
+        return self._miners.keys()
+
+    async def get_miners(self) -> FrozenSet[BitcoinNode]:
+        return frozenset(BitcoinNode(ip) for ip in await self.get_miner_ips())
+
+    async def is_miner(self, node: BitcoinNode) -> Miner:
+        if self._miner_query_lock is None:
+            self._miner_query_lock = asyncio.Lock()
+        async with self._miner_query_lock:
+            is_miner = self._miners is not None and self._finished_miners_query and node.address in self._miners
+        if is_miner or node.address in await self.get_miner_ips():
+            return Miner.MINER
+        else:
+            return Miner.UNKNOWN

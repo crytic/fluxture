@@ -2,7 +2,7 @@ from abc import abstractmethod
 from ipaddress import IPv4Address, IPv6Address as IPv6AddressPython
 from typing import Callable, FrozenSet, Generic, Optional, Set, Sized, TypeVar, Union
 
-from .blockchain import Node
+from .blockchain import Miner, Node
 from .db import Cursor, Database, ForeignKey, Model, Table
 from .geolocation import Geolocation
 from .serialization import DateTime, IPv6Address
@@ -11,9 +11,20 @@ from .serialization import DateTime, IPv6Address
 N = TypeVar("N", bound=Node)
 
 
+class HostInfo(Model):
+    ip: IPv6Address
+    isp: str
+    os: str
+    timestamp: DateTime
+
+    def __hash__(self):
+        return hash(self.ip)
+
+
 class CrawledNode(Model["CrawlDatabase"]):
     ip: IPv6Address
     port: int
+    is_miner: Miner
 
     def __hash__(self):
         return hash((self.ip, self.port))
@@ -48,13 +59,13 @@ class CrawledNode(Model["CrawlDatabase"]):
 
 
 class Edge(Model):
-    from_node: ForeignKey["nodes", CrawledNode]
-    to_node: ForeignKey["nodes", CrawledNode]
+    from_node: ForeignKey["nodes", CrawledNode]  # noqa: F821
+    to_node: ForeignKey["nodes", CrawledNode]  # noqa: F821
     timestamp: DateTime
 
 
 class CrawlEvent(Model):
-    node: ForeignKey["nodes", CrawledNode]
+    node: ForeignKey["nodes", CrawledNode]  # noqa: F821
     timestamp: DateTime
     event: str
     description: str
@@ -65,6 +76,7 @@ class CrawlDatabase(Database):
     events: Table[CrawlEvent]
     locations: Table[Geolocation]
     edges: Table[Edge]
+    hosts: Table[HostInfo]
 
     def __init__(self, path: str = ":memory:"):
         super().__init__(path)
@@ -73,6 +85,14 @@ class CrawlDatabase(Database):
 class Crawl(Generic[N], Sized):
     @abstractmethod
     def __contains__(self, node: N) -> bool:
+        raise NotImplementedError()
+
+    @abstractmethod
+    def __getitem__(self, node: N) -> CrawledNode:
+        raise NotImplementedError()
+
+    @abstractmethod
+    def get_node(self, node: N) -> CrawledNode:
         raise NotImplementedError()
 
     @abstractmethod
@@ -91,6 +111,14 @@ class Crawl(Generic[N], Sized):
     def set_neighbors(self, node: N, neighbors: FrozenSet[N]):
         raise NotImplementedError()
 
+    @abstractmethod
+    def set_miner(self, node: N, miner: Miner):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def set_host_info(self, host_info: HostInfo):
+        raise NotImplementedError()
+
 
 class DatabaseCrawl(Generic[N], Crawl[N]):
     def __init__(
@@ -105,10 +133,17 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
     def __contains__(self, node: N) -> bool:
         return self.db.nodes.select(ip=node.ip, port=node.port).fetchone() is not None
 
-    def get_node(self, node: N) -> CrawledNode:
+    def __getitem__(self, node: N) -> CrawledNode:
         try:
             return next(iter(self.db.nodes.select(ip=node.address, port=node.port)))
         except StopIteration:
+            pass
+        raise KeyError(node)
+
+    def get_node(self, node: N) -> CrawledNode:
+        try:
+            return self[node]
+        except KeyError:
             # this is a new node
             pass
         ret = CrawledNode(ip=node.address, port=node.port)
@@ -145,6 +180,14 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
 
     def set_location(self, ip: IPv6Address, location: Geolocation):
         self.db.locations.append(location)
+
+    def set_miner(self, node: N, miner: Miner):
+        crawled_node = self.get_node(node)
+        crawled_node.is_miner = miner
+        self.db.nodes.update(crawled_node)
+
+    def set_host_info(self, host_info: HostInfo):
+        self.db.hosts.append(host_info)
 
     def __len__(self) -> int:
         return len(self.db.nodes)

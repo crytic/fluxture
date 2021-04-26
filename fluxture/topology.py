@@ -131,6 +131,10 @@ class Topology(Command):
                             default="ip",
                             choices=["ip", "city", "country", "continent"],
                             help="grouping of nodes (default: %(default)s)")
+        parser.add_argument("--conglomerate", "-c", action="store_true",
+                            help="when calculating the PageRank of a group, instead of summing the constituent nodes'"
+                                 "ranks (the default), treat each group as its own supernode and use the PageRank of "
+                                 "the group nodes in the intersection graph formed by the groups")
 
     def run(self, args):
         raw_graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE))
@@ -162,7 +166,10 @@ class Topology(Command):
             else:
                 raise NotImplementedError(f"TODO: Implement support for --group-by={args.group_by}")
             graph = raw_graph.group_by(grouper)
-            page_rank = graph.grouped_pagerank()
+            if args.conglomerate:
+                page_rank = graph.pagerank()
+            else:
+                page_rank = graph.grouped_pagerank()
         # graph.to_dot().save("graph.dot")
         graph.prune()
         if len(graph) == 0:
