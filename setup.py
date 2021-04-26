@@ -18,7 +18,7 @@ setup(
         'networkx~=2.4',
         'shapely~=1.7.1',
         'six>=1.5',
-        'tqdm~=4.48.0',
+        'tqdm>=4.48.0',
     ],
     entry_points={
         'console_scripts': [
