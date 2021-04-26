@@ -2,10 +2,16 @@ import asyncio
 import socket
 from abc import ABCMeta, abstractmethod
 from ipaddress import ip_address, IPv4Address, IPv6Address
-from typing import AsyncIterator, Dict, FrozenSet, Generic, Optional, Tuple, Type, TypeVar, Union
+from typing import AsyncIterator, Dict, FrozenSet, Generic, Iterable, Optional, Tuple, Type, TypeVar, Union
 
 from .messaging import Message
 from . import serialization
+
+
+class Miner(serialization.IntEnum):
+    UNKNOWN = 0
+    MINER = 1
+    NOT_MINER = 2
 
 
 def get_public_ip() -> Union[IPv4Address, IPv6Address]:
@@ -117,6 +123,19 @@ class Blockchain(Generic[N], metaclass=ABCMeta):
             raise TypeError("Subclasses of `Blockchain` must define a `node_type`")
         BLOCKCHAINS[cls.name] = cls
 
+    @classmethod
+    @abstractmethod
+    async def default_seeds(cls) -> Iterable[N]:
+        raise NotImplementedError()
+
     @abstractmethod
     async def get_neighbors(self, node: N) -> FrozenSet[N]:
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def is_miner(self, node: N) -> Miner:
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def get_miners(self) -> FrozenSet[N]:
         raise NotImplementedError()

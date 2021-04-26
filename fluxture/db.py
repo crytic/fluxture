@@ -239,8 +239,14 @@ def sql_format(
         if not issubclass(expected_type, ForeignKey):
             raise ValueError(f"Model {param!r} was expected to be of type {expected_type!r}")
         return getattr(param, expected_type.key)
-    elif isinstance(param, str) or isinstance(param, bytes) or isinstance(param, int) or isinstance(param, float):
-        return param
+    elif isinstance(param, int):
+        return int(param)
+    elif isinstance(param, float):
+        return float(param)
+    elif isinstance(param, str):
+        return str(param)
+    elif isinstance(param, bytes):
+        return bytes(param)
     elif isinstance(param, ForeignKey):
         return sql_format(param.key, expected_type)
     elif isinstance(param, Packable):
@@ -439,6 +445,23 @@ class Table(Generic[M]):
                                          ))
                     setattr(row, "rowid", RowId(result.lastrowid))
                     self._finalize_added_row(row)
+            finally:
+                cur.close()
+
+    def update(self, row: M):
+        if not row.in_db:
+            raise ValueError(f"Row {row!r} is not yet in the database!")
+        with self.db:
+            set_argument = ",".join([f"{field_name} = ?" for field_name in self.model_type.FIELDS.keys() if field_name != "rowid"])
+            new_values = tuple(
+                sql_format(param, expected_type)
+                for param, (field_name, expected_type)
+                in zip(row.to_row(), self.model_type.FIELDS.items())
+                if field_name != "rowid"
+            )
+            cur = self.db.con.cursor()
+            try:
+                cur.execute(f"UPDATE {self.name} SET {set_argument} WHERE rowid=?", new_values + (int(row.rowid),))
             finally:
                 cur.close()
 

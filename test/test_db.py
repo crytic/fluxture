@@ -54,7 +54,7 @@ class TestDatabase(TestCase):
 
     def test_foreign_key(self):
         class Height(Model):
-            person: primary_key(ForeignKey["people", Person])
+            person: primary_key(ForeignKey["people", Person])  # noqa: F821
             height: int
 
         class TestDB(Database):

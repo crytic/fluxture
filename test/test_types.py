@@ -22,6 +22,45 @@ class TestTypes(TestCase):
             ty for ty in cls.packable_types if issubclass(ty, SizedInteger) and ty is not SizedInteger
         ]
 
+    def test_int_enum(self):
+        class EnumTest(IntEnum):
+            FOO = 0
+            BAR = 10
+
+        self.assertEqual(EnumTest.FOO, 0)
+        self.assertEqual(EnumTest.BAR, 10)
+        self.assertIsInstance(EnumTest.FOO, EnumTest)
+        self.assertIsInstance(EnumTest.BAR, EnumTest)
+        self.assertEqual(EnumTest["FOO"], EnumTest.FOO)
+        self.assertEqual(EnumTest["BAR"], EnumTest.BAR)
+        self.assertIs(EnumTest.get_type(), UInt8)
+        self.assertEqual(EnumTest.DEFAULT, EnumTest.FOO)
+
+        class SignedEnum(IntEnum):
+            FOO = -1
+            BAR = 100
+
+        self.assertIs(SignedEnum.get_type(), Int8)
+
+        class LargeEnum(IntEnum):
+            FOO = -500
+            BAR = 35000
+
+        self.assertIs(LargeEnum.get_type(), Int32)
+
+    def test_bad_int_enum(self):
+        def make_bad_enum():
+            class BadEnum(IntEnum):
+                NOT_INT = "foo"
+
+        self.assertRaises(TypeError, make_bad_enum)
+
+        def make_oversized_enum():
+            class OversizedEnum(IntEnum):
+                FOO = 99999999999999999999999
+
+        self.assertRaises(TypeError, make_oversized_enum)
+
     def test_sized_integers(self):
         for int_type in tqdm(self.sized_integer_types, desc="testing sized integers", unit=" types", leave=False):
             for _ in trange(1000, desc=f"testing {int_type.__name__}", unit=" tests", leave=False):
