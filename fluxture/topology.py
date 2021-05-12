@@ -34,9 +34,12 @@ class NodeGroup(frozenset, Generic[N], FrozenSet[N]):
 
 class CrawlGraph(nx.DiGraph, Generic[N]):
     @staticmethod
-    def load(db: CrawlDatabase) -> "CrawlGraph[CrawledNode]":
+    def load(db: CrawlDatabase, only_crawled_nodes: bool = False) -> "CrawlGraph[CrawledNode]":
         graph = CrawlGraph()
         for node in tqdm(db.nodes, leave=False, desc="Constructing Topology", unit=" nodes"):
+            if only_crawled_nodes and node.last_crawled is None:
+                continue
+            graph.add_node(node)
             for to_node in node.get_latest_edges():
                 graph.add_edge(node, to_node)
                 # assume that all edges are bidirectional
@@ -131,13 +134,16 @@ class Topology(Command):
                             default="ip",
                             choices=["ip", "city", "country", "continent", "version"],
                             help="grouping of nodes (default: %(default)s)")
+        parser.add_argument("--only-crawled-nodes", action="store_true", help="only analyze nodes that were crawled; "
+                                                                              "do not include nodes that we discovered "
+                                                                              "but did not connect to")
         parser.add_argument("--conglomerate", "-c", action="store_true",
                             help="when calculating the PageRank of a group, instead of summing the constituent nodes'"
                                  "ranks (the default), treat each group as its own supernode and use the PageRank of "
                                  "the group nodes in the intersection graph formed by the groups")
 
     def run(self, args):
-        raw_graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE))
+        raw_graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE), only_crawled_nodes=args.only_crawled_nodes)
         num_nodes = len(raw_graph)
         if num_nodes == 0:
             sys.stderr.write("Error: The crawl contains no nodes!\n")
