@@ -9,7 +9,7 @@ from inspect import isabstract
 from typing import Any, Coroutine, Deque, Dict, FrozenSet, Generic, Iterable, List, Optional, Union
 
 from .blockchain import Blockchain, BLOCKCHAINS, Miner, Node
-from .crawl_schema import Crawl, CrawlDatabase, DatabaseCrawl, N
+from .crawl_schema import Crawl, CrawlDatabase, DatabaseCrawl, DateTime, N
 from .fluxture import Command
 from .geolocation import GeoIP2Error, GeoIP2Locator, Geolocator
 
@@ -81,6 +81,11 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                     neighbors.append(neighbor)
                     new_neighbors.add(neighbor)
             self.crawl.set_neighbors(node, frozenset(neighbors))
+            version = await self.blockchain.get_version(node)
+            if version is not None:
+                crawled_node = self.crawl.get_node(node)
+                self.crawl.add_event(crawled_node, event="version", description=version.version,
+                                     timestamp=DateTime(version.timestamp))
             return frozenset(new_neighbors)
 
     def add_tasks(self, *tasks: Union[Future, Coroutine[Any, Any, None]]):

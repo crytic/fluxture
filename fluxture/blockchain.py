@@ -23,6 +23,12 @@ def get_public_ip() -> Union[IPv4Address, IPv6Address]:
         s.close()
 
 
+class Version:
+    def __init__(self, version: str, timestamp: int):
+        self.version: str = version
+        self.timestamp: int = timestamp
+
+
 class Node(metaclass=ABCMeta):
     def __init__(self, address: Union[str, bytes, IPv4Address, IPv6Address], port: int):
         if not isinstance(address, IPv6Address):
@@ -130,6 +136,10 @@ class Blockchain(Generic[N], metaclass=ABCMeta):
 
     @abstractmethod
     async def get_neighbors(self, node: N) -> FrozenSet[N]:
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def get_version(self, node: N) -> Optional[Version]:
         raise NotImplementedError()
 
     @abstractmethod

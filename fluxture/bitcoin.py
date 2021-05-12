@@ -8,7 +8,7 @@ from typing import AsyncIterator, Dict, FrozenSet, Generic, KeysView, List, Opti
 
 import fluxture.structures
 
-from .blockchain import Blockchain, get_public_ip, Miner, Node
+from .blockchain import Blockchain, get_public_ip, Miner, Node, Version
 from .messaging import BinaryMessage
 from .serialization import ByteOrder, P, UnpackError
 from .shodan import get_api, SearchQuery, ShodanResult
@@ -281,6 +281,13 @@ class VersionMessage(BitcoinMessage):
     start_height: serialization.Int32
     relay: serialization.Bool
 
+    def __str__(self):
+        try:
+            s = self.user_agent.decode("utf-8")
+        except UnicodeDecodeError:
+            s = repr(self.user_agent)
+        return f"{int(self.version)} {s}"
+
 
 class FeeFilter(BitcoinMessage):
     command = "feefilter"
@@ -358,6 +365,7 @@ class BitcoinNode(Node):
         super().__init__(address, port)
         self.connected: bool = False
         self.connecting: bool = False
+        self.version: Optional[VersionMessage] = None
 
     async def receive_message(self) -> Optional["BitcoinMessage"]:
         return await BitcoinMessage.next_message(await self.reader)
@@ -396,6 +404,15 @@ class BitcoinNode(Node):
         raise BitcoinError(f"Node {self.address}:{self.port} closed the connection before replying to our "
                            "GetAddr message")
 
+    async def get_version(self) -> VersionMessage:
+        if self.version is not None:
+            return self.version
+        async with self:
+            async for _ in self.run():
+                if self.version is not None:
+                    return self.version
+        raise BitcoinError(f"Node {self.address}:{self.port} closed the connection before sending us a VersionMessage")
+
     async def run(self) -> AsyncIterator["BitcoinMessage"]:
         async with self:
             await self.connect()
@@ -416,6 +433,7 @@ class BitcoinNode(Node):
                 elif self.is_running:
                     # print(f"{self.address}:{self.port} {message}")
                     if isinstance(message, VersionMessage):
+                        self.version = message
                         await self.send_message(VerackMessage())
                     elif isinstance(message, Ping):
                         await self.send_message(Pong(nonce=message.nonce))
@@ -459,6 +477,13 @@ class Bitcoin(Blockchain[BitcoinNode]):
                 ("seed.btc.petertodd.org",)
             )
         return cls._DEFAULT_SEEDS
+
+    async def get_version(self, node: BitcoinNode) -> Optional[Version]:
+        try:
+            version = await node.get_version()
+            return Version(str(version), version.timestamp)
+        except BitcoinError:
+            return None
 
     async def get_neighbors(self, node: BitcoinNode) -> FrozenSet[BitcoinNode]:
         assert node.is_running
