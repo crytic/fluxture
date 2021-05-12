@@ -78,8 +78,11 @@ class KMLGeolocation(KMLGraphNode):
         locations: Dict[Geolocation, Set[CrawledNode]] = defaultdict(set)
         for node in possible_nodes_by_port.values():
             for neighbor in node.get_latest_edges():
-                for loc in self.db.locations.select(ip=neighbor.ip, limit=1).fetchone():
-                    locations[loc].add(neighbor)
+                neighbor_location = self.db.locations.select(ip=neighbor.ip, limit=1, order_by="timestamp",
+                                                             order_direction="DESC").fetchone()
+                if neighbor_location is None:
+                    continue
+                locations[neighbor_location].add(neighbor)
         return (
             KMLGeolocation(loc, self.db, is_miner=any(n.is_miner == Miner.MINER for n in nodes))
             for loc, nodes in locations.items() if loc is not None
@@ -90,7 +93,11 @@ class KMLGeolocation(KMLGraphNode):
             miner_str = f"Likely a Miner "
         else:
             miner_str = ""
-        return f"{miner_str}{self.location.ip!s}: {self.location.city} ({self.lat}°N, {self.lon}°E) @ " \
+        if self.location.ip.ipv4_mapped is not None:
+            ip_str = str(self.location.ip.ipv4_mapped)
+        else:
+            ip_str = str(self.location.ip)
+        return f"{miner_str}{ip_str}: {self.location.city} ({self.lat}°N, {self.lon}°E) @ " \
                f"{self.location.timestamp!s}"
 
     def to_placemark(self, style: Optional[Style] = None) -> kml.Placemark:
