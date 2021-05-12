@@ -7,6 +7,7 @@ from typing import Iterator, Optional, Tuple, Union
 from typing_extensions import Protocol
 
 import geoip2.database
+from geoip2.errors import AddressNotFoundError
 import great_circle_calculator.great_circle_calculator as gcc
 
 from .db import Model
@@ -112,7 +113,13 @@ class GeoIP2Locator:
 
     def locate(self, ip: Union[IPv6Address, str, PythonIPv4, PythonIPv6]) -> Geolocation:
         with self:
-            city = self._geoip.city(str(ip))
+            try:
+                city = self._geoip.city(str(ip))
+            except AddressNotFoundError:
+                if isinstance(ip, PythonIPv6) and ip.ipv4_mapped is not None:
+                    city = self._geoip.city(str(ip.ipv4_mapped))
+                else:
+                    raise
             return Geolocation(
                 ip=IPv6Address(ip),
                 city=city.city.name,
