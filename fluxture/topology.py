@@ -129,7 +129,7 @@ class Topology(Command):
         parser.add_argument("--group-by",
                             "-g",
                             default="ip",
-                            choices=["ip", "city", "country", "continent"],
+                            choices=["ip", "city", "country", "continent", "version"],
                             help="grouping of nodes (default: %(default)s)")
         parser.add_argument("--conglomerate", "-c", action="store_true",
                             help="when calculating the PageRank of a group, instead of summing the constituent nodes'"
@@ -138,7 +138,8 @@ class Topology(Command):
 
     def run(self, args):
         raw_graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE))
-        if len(raw_graph) == 0:
+        num_nodes = len(raw_graph)
+        if num_nodes == 0:
             sys.stderr.write("Error: The crawl contains no nodes!\n")
             return 1
         elif args.group_by == "ip":
@@ -163,6 +164,12 @@ class Topology(Command):
                     if loc is None:
                         return "??"
                     return loc.continent_code
+            elif args.group_by == "version":
+                def grouper(n: CrawledNode) -> str:
+                    v = n.get_version()
+                    if v is None:
+                        return "?"
+                    return v.version
             else:
                 raise NotImplementedError(f"TODO: Implement support for --group-by={args.group_by}")
             graph = raw_graph.group_by(grouper)
@@ -176,10 +183,11 @@ class Topology(Command):
             sys.stderr.write("Error: The crawl is insufficient; all of the nodes are in their own connected "
                              "components\n")
             return 1
+
         for node, rank in page_rank.items():
             if isinstance(node, NodeGroup):
-                print(f"{node.name}\t{rank}")
+                print(f"{node.name}\t{rank}\t{len(node)}\t{len(node) / num_nodes * 100.0:0.1f}")
             else:
-                print(f"[{node.ip!s}]:{node.port}\t{rank}")
+                print(f"[{node.ip!s}]:{node.port}\t{rank}\t1\t{1 / num_nodes * 100.0:0.1f}")
         print(f"Edge Connectivity: {nx.edge_connectivity(graph)}")
         return 0

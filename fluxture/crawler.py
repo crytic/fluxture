@@ -116,8 +116,11 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                     if isinstance(result, Exception):
                         # TODO: Save the exception to the database
                         # self.crawl.add_event(node, event="Exception", description=str(result))
-                        traceback.print_tb(result.__traceback__)
-                        print(result)
+                        if isinstance(result, (ConnectionError, OSError, BrokenPipeError)):
+                            print(str(result))
+                        else:
+                            traceback.print_tb(result.__traceback__)
+                            print(result)
                     else:
                         queue.extend(result)
             if self.listener_tasks:

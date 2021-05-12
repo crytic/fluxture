@@ -2,7 +2,7 @@ from abc import abstractmethod
 from ipaddress import IPv4Address, IPv6Address as IPv6AddressPython
 from typing import Callable, FrozenSet, Generic, Optional, Set, Sized, TypeVar, Union
 
-from .blockchain import Miner, Node
+from .blockchain import Miner, Node, Version
 from .db import Cursor, Database, ForeignKey, Model, Table
 from .geolocation import Geolocation
 from .serialization import DateTime, IPv6Address
@@ -30,7 +30,14 @@ class CrawledNode(Model["CrawlDatabase"]):
         return hash((self.ip, self.port))
 
     def get_events(self) -> Cursor["CrawlEvent"]:
-        return self.db.events.select(node=self.rowid, order_by="timestamp DESC")
+        return self.db.events.select(node=self.rowid, order_by="timestamp", order_direction="DESC")
+
+    def get_version(self) -> Optional[Version]:
+        for version_event in self.db.events.select(
+            node=self.rowid, order_by="timestamp", order_direction="DESC", limit=1, event="version"
+        ):
+            return Version(version_event.description, version_event.timestamp)
+        return None
 
     def get_location(self) -> Optional[Geolocation]:
         return self.db.locations.select(ip=self.ip, order_by="timestamp DESC", limit=1).fetchone()
