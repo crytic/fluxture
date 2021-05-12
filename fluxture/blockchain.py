@@ -67,7 +67,14 @@ class Node(metaclass=ABCMeta):
 
     async def connect(self):
         if self._reader is None:
-            self._reader, self._writer = await asyncio.open_connection(str(self.address), self.port)
+            try:
+                self._reader, self._writer = await asyncio.open_connection(str(self.address), self.port)
+            except ConnectionRefusedError:
+                # Is it an IPv4 address? If so, try connecting via that!
+                if self.address.ipv4_mapped is not None:
+                    self._reader, self._writer = await asyncio.open_connection(str(self.address.ipv4_mapped), self.port)
+                else:
+                    raise
             if self._stop is None:
                 self._stop = asyncio.Event()
             elif self._stop.is_set():
