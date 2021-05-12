@@ -88,16 +88,19 @@ class KMLGeolocation(KMLGraphNode):
             for loc, nodes in locations.items() if loc is not None
         )
 
+    @property
+    def ip_str(self) -> str:
+        if self.location.ip.ipv4_mapped is not None:
+            return str(self.location.ip.ipv4_mapped)
+        else:
+            return str(self.location.ip)
+
     def description(self) -> str:
         if self.is_miner:
             miner_str = f"Likely a Miner "
         else:
             miner_str = ""
-        if self.location.ip.ipv4_mapped is not None:
-            ip_str = str(self.location.ip.ipv4_mapped)
-        else:
-            ip_str = str(self.location.ip)
-        return f"{miner_str}{ip_str}: {self.location.city} ({self.lat}°N, {self.lon}°E) @ " \
+        return f"{miner_str}{self.ip_str}: {self.location.city} ({self.lat}°N, {self.lon}°E) @ " \
                f"{self.location.timestamp!s}"
 
     def to_placemark(self, style: Optional[Style] = None) -> kml.Placemark:
@@ -106,7 +109,7 @@ class KMLGeolocation(KMLGraphNode):
         p = kml.Placemark(
             KML_NS,
             self.uid(),
-            str(self.location.ip),
+            self.ip_str,
             self.description()
         )
         p.append_style(style)
