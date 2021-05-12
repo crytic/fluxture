@@ -222,11 +222,12 @@ class CrawlCommand(Command):
         blockchain_type = BLOCKCHAINS[args.BLOCKCHAIN_NAME]
 
         def crawl():
-            Crawler(
-                blockchain=blockchain_type(),
-                crawl=DatabaseCrawl(blockchain_type.node_type, CrawlDatabase(args.database)),
-                geolocator=geo
-            ).do_crawl()
+            with CrawlDatabase(args.database) as db:
+                Crawler(
+                    blockchain=blockchain_type(),
+                    crawl=DatabaseCrawl(blockchain_type.node_type, db),
+                    geolocator=geo
+                ).do_crawl()
 
         if geo is None:
             crawl()
