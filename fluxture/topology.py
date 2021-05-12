@@ -41,6 +41,8 @@ class CrawlGraph(nx.DiGraph, Generic[N]):
                 continue
             graph.add_node(node)
             for to_node in node.get_latest_edges():
+                if only_crawled_nodes and to_node.last_crawled is None:
+                    continue
                 graph.add_edge(node, to_node)
                 # assume that all edges are bidirectional
                 graph.add_edge(to_node, node)
