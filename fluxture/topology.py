@@ -12,6 +12,7 @@ from tqdm import tqdm
 from .crawl_schema import CrawledNode
 from .crawler import CrawlDatabase
 from .fluxture import Command
+from .statistics import Statistics
 
 
 N = TypeVar("N", bound=Hashable)
@@ -198,4 +199,6 @@ class Topology(Command):
             else:
                 print(f"[{node.ip!s}]:{node.port}\t{rank}\t1\t{1 / num_nodes * 100.0:0.1f}")
         print(f"Edge Connectivity: {nx.edge_connectivity(graph)}")
+        print(f"Out-degree: {Statistics((graph.out_degree[node] for node in graph))!s}")
+        print(f"Average shortest path length: {nx.average_shortest_path_length(graph)}")
         return 0
