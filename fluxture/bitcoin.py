@@ -1,10 +1,13 @@
 import asyncio
+import logging
 import socket
 from abc import ABC
 from hashlib import sha256
 from ipaddress import IPv4Address, IPv6Address
+from logging import getLogger
+import sys
 from time import time as current_time
-from typing import AsyncIterator, Dict, FrozenSet, Generic, KeysView, List, Optional, Tuple, Type, TypeVar, Union
+from typing import AsyncIterator, Dict, FrozenSet, Generic, KeysView, List, Optional, Set, Tuple, Type, TypeVar, Union
 
 import fluxture.structures
 
@@ -14,6 +17,7 @@ from .serialization import ByteOrder, P, UnpackError
 from .shodan import get_api, SearchQuery, ShodanResult
 from . import serialization
 
+log = getLogger(__file__)
 
 BITCOIN_MAINNET_MAGIC = b"\xf9\xbe\xb4\xd9"
 
@@ -447,13 +451,38 @@ async def collect_addresses(url: str, port: int = 8333) -> Tuple[BitcoinNode, ..
     )
 
 
-async def collect_defaults(*args: Union[Tuple[str], Tuple[str, int]]) -> Tuple[BitcoinNode, ...]:
-    results = []
+async def collect_defaults(
+        *args: Union[Tuple[str], Tuple[str, int]], use_shodan: bool = True
+) -> Tuple[BitcoinNode, ...]:
+    if use_shodan:
+        if log.getEffectiveLevel() <= logging.INFO:
+            last_update_time = current_time()
+            results: Set[BitcoinNode] = set()
+            sys.stderr.write("Getting seed nodes from Shodan...")
+            sys.stderr.flush()
+            for shodan_result in NODE_QUERY.run(get_api()):
+                results.add(BitcoinNode(shodan_result.ip))
+                time = current_time()
+                if time - last_update_time >= 1.0:
+                    sys.stderr.write(f"\r{' ' * 80}\rGot {len(results)} seed nodes from Shodan...")
+                    sys.stderr.flush()
+                    last_update_time = time
+            sys.stderr.write(f"\r{' ' * 80}\r")
+        else:
+            results: Set[BitcoinNode] = {
+                BitcoinNode(shodan_result.ip) for shodan_result in NODE_QUERY.run(get_api())
+            }
+        shodan_seeds = len(results)
+        log.info(f"Got {shodan_seeds} seed nodes from Shodan")
+    else:
+        results = set()
+        shodan_seeds = 0
     for result in await asyncio.gather(*(collect_addresses(*arg) for arg in args), return_exceptions=True):
         if isinstance(result, Exception):
             print(f"Error connecting to seed: {result!s}")
         else:
-            results.extend(result)
+            results.add(result)
+    log.info(f"Got {len(results) - shodan_seeds} node IPs from the default Bitcoin seeds")
     return tuple(results)
 
 

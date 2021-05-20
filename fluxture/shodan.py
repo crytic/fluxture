@@ -114,7 +114,8 @@ class SearchQuery(Query):
         return sq
 
     def run(self, api: Shodan) -> Iterator[ShodanResult]:
-        return (ShodanResult(**result) for result in api.search_cursor(self.query))
+        for result in api.search_cursor(self.query):
+            yield ShodanResult(**result)
 
     @iterator_to_async(poll_interval=1.0)
     def run_async(self, api: Shodan):
