@@ -55,45 +55,58 @@ class GeoIP2Error(RuntimeError):
     pass
 
 
+def download_maxmind_db(maxmind_license_key: str, city_db_path: Optional[str] = None, overwrite: bool = True) -> str:
+    """
+    Downloads the latest MaxMind GeoLite2 database returning the path to which it was saved.
+
+    If the path is omitted, the default path is used and returned.
+
+    """
+    if city_db_path is None:
+        city_db_path = Path.home() / ".config" / "fluxture" / "geolite2" / "GeoLite2-City.mmdb"
+    else:
+        city_db_path = Path(city_db_path)
+    if overwrite or not city_db_path.exists():
+        if maxmind_license_key is None:
+            raise GeoIP2Error("No MaxMind GeoLite2 database provided; need a `maxmind_license_key` to download it. "
+                              "Sign up for GeoLite2 for free here: https://www.maxmind.com/en/geolite2/signup "
+                              "then, after logging in, generate a license key under the Services menu.")
+        db_dir = city_db_path.parent
+        if not db_dir.exists():
+            db_dir.mkdir(parents=True)
+        tmpfile = NamedTemporaryFile(mode="wb", delete=False)
+        try:
+            with urllib.request.urlopen(r"https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&"
+                                        f"license_key={maxmind_license_key}&suffix=tar.gz") as response:
+                # We have to write this to a temp file because the gzip decompression requires seekability
+                while True:
+                    chunk = response.read(1024 ** 2)
+                    if not chunk:
+                        break
+                    tmpfile.write(chunk)
+            tmpfile.close()
+            with tarfile.open(tmpfile.name, mode="r:gz") as tar:
+                geolite_dir = None
+                for tarinfo in tar:
+                    if tarinfo.isdir():
+                        geolite_dir = tarinfo.name
+                if geolite_dir is None:
+                    raise GeoIP2Error("Unexpected GeoLite2 database format")
+                tar.extractall(str(city_db_path.parent))
+                latest_dir = db_dir / "GeoLite2-City_latest"
+                latest_dir.unlink(missing_ok=True)
+                latest_dir.symlink_to(db_dir / geolite_dir)
+        finally:
+            Path(tmpfile.name).unlink(missing_ok=True)
+        city_db_path.unlink(missing_ok=True)
+        city_db_path.symlink_to(latest_dir / "GeoLite2-City.mmdb")
+    return str(city_db_path)
+
+
 class GeoIP2Locator:
     def __init__(self, city_db_path: Optional[str] = None, maxmind_license_key: Optional[str] = None):
-        if city_db_path is None:
-            city_db_path = Path.home() / ".config" / "fluxture" / "geolite2" / "GeoLite2-City.mmdb"
-        else:
-            city_db_path = Path(city_db_path)
-        if not city_db_path.exists():
-            if maxmind_license_key is None:
-                raise GeoIP2Error("No MaxMind GeoLite2 database provided; need a `maxmind_license_key` to download it. "
-                                  "Sign up for GeoLite2 for free here: https://www.maxmind.com/en/geolite2/signup "
-                                  "then, after logging in, generate a license key under the Services menu.")
-            db_dir = city_db_path.parent
-            if not db_dir.exists():
-                db_dir.mkdir(parents=True)
-            tmpfile = NamedTemporaryFile(mode="wb", delete=False)
-            try:
-                with urllib.request.urlopen(r"https://download.maxmind.com/app/geoip_download?edition_id=GeoLite2-City&"
-                                            f"license_key={maxmind_license_key}&suffix=tar.gz") as response:
-                    # We have to write this to a temp file because the gzip decompression requires seekability
-                    while True:
-                        chunk = response.read(1024**2)
-                        if not chunk:
-                            break
-                        tmpfile.write(chunk)
-                tmpfile.close()
-                with tarfile.open(tmpfile.name, mode="r:gz") as tar:
-                    geolite_dir = None
-                    for tarinfo in tar:
-                        if tarinfo.isdir():
-                            geolite_dir = tarinfo.name
-                    if geolite_dir is None:
-                        raise GeoIP2Error("Unexpected GeoLite2 database format")
-                    tar.extractall(str(city_db_path.parent))
-                    latest_dir = db_dir / "GeoLite2-City_latest"
-                    latest_dir.symlink_to(db_dir / geolite_dir)
-            finally:
-                Path(tmpfile.name).unlink(missing_ok=True)
-            city_db_path.symlink_to(latest_dir / "GeoLite2-City.mmdb")
-        self.city_db_path: Path = city_db_path
+        self.city_db_path: Path = \
+            download_maxmind_db(maxmind_license_key, city_db_path, overwrite=False)  # type: ignore
         self._geoip: Optional[geoip2.database.Reader] = None
         self._entries: int = 0
 

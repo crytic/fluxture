@@ -11,7 +11,7 @@ from typing import Any, Coroutine, Deque, Dict, FrozenSet, Generic, Iterable, Li
 from .blockchain import Blockchain, BLOCKCHAINS, Miner, Node
 from .crawl_schema import Crawl, CrawlDatabase, DatabaseCrawl, DateTime, N
 from .fluxture import Command
-from .geolocation import GeoIP2Error, GeoIP2Locator, Geolocator
+from .geolocation import download_maxmind_db, GeoIP2Error, GeoIP2Locator, Geolocator
 
 
 CRAWL_LISTENERS: List["CrawlListener"] = []
@@ -195,6 +195,19 @@ CITY_DB_PARSER.add_argument("--city-db-path", "-c", type=str, default=None,
 CITY_DB_PARSER.add_argument("--maxmind-license-key", type=str, default=None,
                             help="License key for automatically downloading a GeoLite2 City database; you generate get "
                             "a free license key by registering at https://www.maxmind.com/en/geolite2/signup")
+
+
+class UpdateMaxmindDBCommand(Command):
+    name = "update-geo-db"
+    help = "download the latest MaxMind GeoLite2 database"
+    parent_parsers = CITY_DB_PARSER,
+
+    def run(self, args: Namespace):
+        if args.maxmind_license_key is None:
+            sys.stderr.write("Error: --maxmind-license-key must be provided\n\n")
+            sys.exit(1)
+        save_path = download_maxmind_db(args.maxmind_license_key, args.city_db_path)
+        print(f"Geolocation database saved to {save_path}")
 
 
 class CrawlCommand(Command):
