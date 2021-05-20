@@ -1,6 +1,7 @@
 import sys
 from argparse import ArgumentParser
 from collections import defaultdict, OrderedDict
+from pathlib import Path
 from typing import (
     Callable, Dict, FrozenSet, Generic, Hashable, Optional, OrderedDict as OrderedDictType, Set, TypeVar, Union
 )
@@ -144,6 +145,9 @@ class Topology(Command):
                             help="when calculating the PageRank of a group, instead of summing the constituent nodes'"
                                  "ranks (the default), treat each group as its own supernode and use the PageRank of "
                                  "the group nodes in the intersection graph formed by the groups")
+        parser.add_argument("--degree-dist", type=str, default=None,
+                            help="an optional path to an output file that will be a GNUplot graph of the degree "
+                                 "distribution of the nodes")
 
     def run(self, args):
         raw_graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE), only_crawled_nodes=args.only_crawled_nodes)
@@ -201,4 +205,21 @@ class Topology(Command):
         print(f"Edge Connectivity: {nx.edge_connectivity(graph)}")
         print(f"Out-degree: {Statistics((graph.out_degree[node] for node in graph))!s}")
         print(f"Average shortest path length: {nx.average_shortest_path_length(graph)}")
+        if not args.degree_dist:
+            return 0
+
+        with open(args.degree_dist, "w") as f:
+            pdf_path = f"{Path(args.degree_dist).stem}.pdf"
+            f.write(f"""set term pdf enhanced color
+set output \"{pdf_path}\"
+set logscale y
+set ylabel 'Number of Nodes'
+set xlabel 'Node Degree'
+
+plot '-' using ($1):(1.0) smooth freq with boxes t ''
+""")
+            for node in graph:
+                f.write(f"{graph.out_degree[node]}\n")
+            sys.stderr.write(f"\nDegree distribution graph saved to {args.degree_dist}\n"
+                             f"Run `gnuplot {args.degree_dist}` to generate the graph in {pdf_path}\n")
         return 0
