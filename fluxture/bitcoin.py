@@ -453,59 +453,40 @@ async def collect_addresses(url: str, port: int = 8333) -> Tuple[BitcoinNode, ..
 
 async def collect_defaults(
         *args: Union[Tuple[str], Tuple[str, int]], use_shodan: bool = True
-) -> Tuple[BitcoinNode, ...]:
+) -> AsyncIterator[BitcoinNode]:
+    yielded = set()
     if use_shodan:
-        if log.getEffectiveLevel() <= logging.INFO:
-            last_update_time = current_time()
-            results: Set[BitcoinNode] = set()
-            sys.stderr.write("Getting seed nodes from Shodan...")
-            sys.stderr.flush()
-            for shodan_result in NODE_QUERY.run(get_api()):
-                results.add(BitcoinNode(shodan_result.ip))
-                time = current_time()
-                if time - last_update_time >= 1.0:
-                    sys.stderr.write(f"\r{' ' * 80}\rGot {len(results)} seed nodes from Shodan...")
-                    sys.stderr.flush()
-                    last_update_time = time
-            sys.stderr.write(f"\r{' ' * 80}\r")
-        else:
-            results: Set[BitcoinNode] = {
-                BitcoinNode(shodan_result.ip) for shodan_result in NODE_QUERY.run(get_api())
-            }
-        shodan_seeds = len(results)
-        log.info(f"Got {shodan_seeds} seed nodes from Shodan")
-    else:
-        results = set()
-        shodan_seeds = 0
+        async for shodan_result in NODE_QUERY.run_async(get_api()):
+            if shodan_result.ip not in yielded:
+                yield BitcoinNode(shodan_result.ip)
+                yielded.add(shodan_result.ip)
+        log.info(f"Got {len(yielded)} seed nodes from Shodan")
     for result in await asyncio.gather(*(collect_addresses(*arg) for arg in args), return_exceptions=True):
         if isinstance(result, Exception):
             print(f"Error connecting to seed: {result!s}")
-        else:
-            results.add(result)
+        elif result.ip not in yielded:
+            yield result
+            yielded.add(result.ip)
     log.info(f"Got {len(results) - shodan_seeds} node IPs from the default Bitcoin seeds")
-    return tuple(results)
 
 
 class Bitcoin(Blockchain[BitcoinNode]):
     name = "bitcoin"
     node_type = BitcoinNode
-    _DEFAULT_SEEDS: Optional[Tuple[BitcoinNode, ...]] = None
     _miner_query_lock: Optional[asyncio.Lock] = None
     _miners: Optional[Dict[IPv6Address, ShodanResult]] = None
     _finished_miners_query: bool = False
 
     @classmethod
-    async def default_seeds(cls) -> Tuple[BitcoinNode, ...]:
-        if cls._DEFAULT_SEEDS is None:
-            cls._DEFAULT_SEEDS = await collect_defaults(
-                ("dnsseed.bitcoin.dashjr.org",),
-                ("dnsseed.bluematt.me",),
-                ("seed.bitcoin.jonasschnelli.ch",),
-                ("seed.bitcoin.sipa.be",),
-                ("seed.bitcoinstats.com",),
-                ("seed.btc.petertodd.org",)
-            )
-        return cls._DEFAULT_SEEDS
+    async def default_seeds(cls) -> AsyncIterator[BitcoinNode]:
+        return collect_defaults(
+            ("dnsseed.bitcoin.dashjr.org",),
+            ("dnsseed.bluematt.me",),
+            ("seed.bitcoin.jonasschnelli.ch",),
+            ("seed.bitcoin.sipa.be",),
+            ("seed.bitcoinstats.com",),
+            ("seed.btc.petertodd.org",)
+        )
 
     async def get_version(self, node: BitcoinNode) -> Optional[Version]:
         try:

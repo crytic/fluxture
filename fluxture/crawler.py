@@ -6,8 +6,9 @@ from argparse import ArgumentParser, Namespace
 from asyncio import ensure_future, Future
 from collections import deque
 from inspect import isabstract
-from typing import Any, Coroutine, Deque, Dict, FrozenSet, Generic, Iterable, List, Optional, Union
+from typing import Any, AsyncIterator, Coroutine, Deque, Dict, FrozenSet, Generic, Iterable, List, Optional, Union
 
+from .async_utils import SyncIteratorWrapper
 from .blockchain import Blockchain, BLOCKCHAINS, Miner, Node
 from .crawl_schema import Crawl, CrawlDatabase, DatabaseCrawl, DateTime, N
 from .fluxture import Command
@@ -102,18 +103,28 @@ class Crawler(Generic[N], metaclass=ABCMeta):
 
     async def _crawl(self, seeds: Optional[Iterable[N]] = None):
         if seeds is None:
-            seeds = await self.blockchain.default_seeds()
-        futures: List[Future] = []
-        queue: Deque[N] = deque(seeds)
+            seed_iter: Optional[AsyncIterator[N]] = await self.blockchain.default_seeds()
+            queue: Deque[N] = deque()
+            futures: List[Future] = [
+                ensure_future(seed_iter.__anext__())
+            ]
+            num_seeds = 0
+        else:
+            seed_iter = None
+            queue = deque(seeds)
+            futures: List[Future] = []
+            num_seeds = len(seeds)
         while futures or queue or self.listener_tasks:
-            print(f"Discovered {len(self.nodes)} nodes; crawled {len(self.crawl)}; "
+            print(f"Discovered {len(self.nodes)} nodes ({num_seeds} seeds); crawled {len(self.crawl)}; "
                   f"crawling {len(futures)}; waiting to crawl {len(queue)}...")
             if futures:
                 waiting_on = futures
                 done, pending = await asyncio.wait(waiting_on, return_when=asyncio.FIRST_COMPLETED)
                 futures = list(pending)
                 for result in await asyncio.gather(*done, return_exceptions=True):
-                    if isinstance(result, Exception):
+                    if isinstance(result, StopAsyncIteration) and seed_iter is not None:
+                        seed_iter = None
+                    elif isinstance(result, Exception):
                         # TODO: Save the exception to the database
                         # self.crawl.add_event(node, event="Exception", description=str(result))
                         if isinstance(result, (ConnectionError, OSError, BrokenPipeError)):
@@ -121,6 +132,10 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                         else:
                             traceback.print_tb(result.__traceback__)
                             print(result)
+                    elif seed_iter is not None and isinstance(result, Node):
+                        queue.append(result)
+                        num_seeds += 1
+                        futures.append(ensure_future(seed_iter.__anext__()))
                     else:
                         queue.extend(result)
             if self.listener_tasks:

@@ -228,14 +228,18 @@ class HostInfoFetcher(CrawlListener):
                 crawler.crawl.set_host_info(info)
 
     async def on_crawl_node(self, crawler: Crawler, node: Node):
-        self.node_queue.append(node)
-        await self.process_nodes(crawler)
+        #self.node_queue.append(node)
+        #await self.process_nodes(crawler)
+
         #info = await HostInfoFetcher.get_host_info(node.address)
         #print(info)
+        pass
 
     async def on_miner(self, crawler: Crawler, node: Node, miner):
-        self.node_queue.append(node)
-        await self.process_nodes(crawler)
+        #self.node_queue.append(node)
+        #await self.process_nodes(crawler)
+        pass
 
     async def on_complete(self, crawler: Crawler):
-        await self.process_nodes(crawler, finalize=True)
+        #await self.process_nodes(crawler, finalize=True)
+        pass

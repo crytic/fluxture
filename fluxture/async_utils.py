@@ -13,8 +13,8 @@ class SyncIteratorWrapper(Generic[T]):
     def __init__(
             self,
             to_wrap: Callable[..., Iterator[T]],
-            args: Iterable[Any],
-            kwargs: Dict[str, Any],
+            args: Iterable[Any] = (),
+            kwargs: Dict[str, Any] = {},
             poll_interval: float = 0.5
     ):
         self.wrapped: Callable[..., Iterator[T]] = to_wrap
