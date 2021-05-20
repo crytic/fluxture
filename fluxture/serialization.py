@@ -246,6 +246,14 @@ class IPv6Address(ipaddress.IPv6Address, AbstractPackable):
     async def read(cls: Type[P], reader: asyncio.StreamReader, byte_order: ByteOrder = ByteOrder.NETWORK) -> P:
         return cls.unpack(await reader.readexactly(cls.num_bytes), byte_order=byte_order)
 
+    def __str__(self):
+        if self.sixtofour is not None:
+            return str(self.sixtofour)
+        elif self.ipv4_mapped is not None:
+            return str(self.ipv4_mapped)
+        else:
+            return super().__str__()
+
 
 class SizeMeta(type):
     num_bytes_is_defined: bool = False

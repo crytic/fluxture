@@ -8,7 +8,6 @@ from collections import deque
 from inspect import isabstract
 from typing import Any, AsyncIterator, Coroutine, Deque, Dict, FrozenSet, Generic, Iterable, List, Optional, Union
 
-from .async_utils import SyncIteratorWrapper
 from .blockchain import Blockchain, BLOCKCHAINS, Miner, Node
 from .crawl_schema import Crawl, CrawlDatabase, DatabaseCrawl, DateTime, N
 from .fluxture import Command

@@ -2,7 +2,7 @@ import asyncio
 import socket
 from abc import ABCMeta, abstractmethod
 from ipaddress import ip_address, IPv4Address, IPv6Address
-from typing import AsyncIterator, Dict, FrozenSet, Generic, Iterable, Optional, Tuple, Type, TypeVar, Union
+from typing import AsyncIterator, Dict, FrozenSet, Generic, Optional, Tuple, Type, TypeVar, Union
 
 from .messaging import Message
 from . import serialization
@@ -67,14 +67,7 @@ class Node(metaclass=ABCMeta):
 
     async def connect(self):
         if self._reader is None:
-            try:
-                self._reader, self._writer = await asyncio.open_connection(str(self.address), self.port)
-            except ConnectionRefusedError:
-                # Is it an IPv4 address? If so, try connecting via that!
-                if self.address.ipv4_mapped is not None:
-                    self._reader, self._writer = await asyncio.open_connection(str(self.address.ipv4_mapped), self.port)
-                else:
-                    raise
+            self._reader, self._writer = await asyncio.open_connection(str(self.address), self.port)
             if self._stop is None:
                 self._stop = asyncio.Event()
             elif self._stop.is_set():

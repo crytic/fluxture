@@ -1,11 +1,9 @@
 import asyncio
-import logging
 import socket
 from abc import ABC
 from hashlib import sha256
 from ipaddress import IPv4Address, IPv6Address
 from logging import getLogger
-import sys
 from time import time as current_time
 from typing import AsyncIterator, Dict, FrozenSet, Generic, KeysView, List, Optional, Set, Tuple, Type, TypeVar, Union
 
@@ -22,7 +20,7 @@ log = getLogger(__file__)
 BITCOIN_MAINNET_MAGIC = b"\xf9\xbe\xb4\xd9"
 
 
-NODE_QUERY = SearchQuery.register(name="BitcoinNode", query="port:8333")
+NODE_QUERY = SearchQuery.register(name="BitcoinNode", query="port:8333 product:\"/Satoshi:*/\"")
 MINER_QUERY = SearchQuery.register(name="BitcoinMiner", query="antminer")
 
 
@@ -461,13 +459,14 @@ async def collect_defaults(
                 yield BitcoinNode(shodan_result.ip)
                 yielded.add(shodan_result.ip)
         log.info(f"Got {len(yielded)} seed nodes from Shodan")
+    yielded_before = len(yielded)
     for result in await asyncio.gather(*(collect_addresses(*arg) for arg in args), return_exceptions=True):
         if isinstance(result, Exception):
             print(f"Error connecting to seed: {result!s}")
         elif result.ip not in yielded:
             yield result
             yielded.add(result.ip)
-    log.info(f"Got {len(results) - shodan_seeds} node IPs from the default Bitcoin seeds")
+    log.info(f"Got {len(yielded) - yielded_before} node IPs from the default Bitcoin seeds")
 
 
 class Bitcoin(Blockchain[BitcoinNode]):
