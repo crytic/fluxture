@@ -138,82 +138,101 @@ class ExportCommand(Command):
                                                                                             "export the data")
 
     def run(self, args):
-        graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE), only_crawled_nodes=False, bidirectional_edges=False)
-        page_rank = graph.pagerank()
+        with tqdm(desc="exporting", leave=False, unit=" steps", total=4) as t:
+            graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE), only_crawled_nodes=False,
+                                    bidirectional_edges=False)
+            t.update(1)
+            clean_graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE), only_crawled_nodes=True,
+                                          bidirectional_edges=True)
+            t.update(1)
+            with tqdm(desc="calculating stationary distribution", leave=False, unit=" steps", total=2) as s:
+                page_rank = graph.pagerank()
+                s.update(1)
+                clean_page_rank = clean_graph.pagerank()
+                s.update(1)
+            del clean_graph
+            t.update(1)
 
-        cities: Set[str] = {"?"}
-        countries: Set[str] = {"?"}
-        continents: Set[str] = {"?"}
-        versions: Set[str] = {"?"}
-        for node in graph:
-            loc = node.get_location()
-            if loc is not None:
-                if loc.city is not None:
-                    cities.add(loc.city)
-                if loc.country_code is not None:
-                    countries.add(loc.country_code)
-                if loc.continent_code is not None:
-                    continents.add(loc.continent_code)
-            version = node.get_version()
-            if version is not None:
-                versions.add(version)
+            cities: Set[str] = {"?"}
+            countries: Set[str] = {"?"}
+            continents: Set[str] = {"?"}
+            versions: Set[str] = {"?"}
+            for node in graph:
+                loc = node.get_location()
+                if loc is not None:
+                    if loc.city is not None:
+                        cities.add(loc.city)
+                    if loc.country_code is not None:
+                        countries.add(loc.country_code)
+                    if loc.continent_code is not None:
+                        continents.add(loc.continent_code)
+                version = node.get_version()
+                if version is not None:
+                    versions.add(version)
 
-        if args.format == "arff":
-            print(f"""% Fluxture crawl
-% Source: {args.CRAWL_DB_FILE}
-
-@RELATION topology
-
-@ATTRIBUTE ip               STRING
-@ATTRIBUTE continent        {{{','.join(map(repr, continents))}}}
-@ATTRIBUTE country          {{{','.join(map(repr, countries))}}}
-@ATTRIBUTE city             {{{','.join(map(repr, cities))}}}
-@ATTRIBUTE crawled          {{TRUE, FALSE}}
-@ATTRIBUTE version          {{{','.join(map(repr, versions))}}}
-@ATTRIBUTE out_degree       NUMERIC
-@ATTRIBUTE in_degree        NUMERIC
-@ATTRIBUTE mutual_neighbors NUMERIC
-@ATTRIBUTE centrality       NUMERIC
-
-@DATA
-""")
-        else:
-            # Assume CSV format
-            print("ip,continent,country,city,crawled,version,out_degree,in_degree,mutual_neighbors,centrality")
-        for node in tqdm(graph, desc="exporting", unit=" nodes", leave=False):
-            loc = node.get_location()
-            if loc is None:
-                city = "?"
-                country = "?"
-                continent = "?"
+            if args.format == "arff":
+                print(f"""% Fluxture crawl
+    % Source: {args.CRAWL_DB_FILE}
+    
+    @RELATION topology
+    
+    @ATTRIBUTE ip               STRING
+    @ATTRIBUTE continent        {{{','.join(map(repr, continents))}}}
+    @ATTRIBUTE country          {{{','.join(map(repr, countries))}}}
+    @ATTRIBUTE city             {{{','.join(map(repr, cities))}}}
+    @ATTRIBUTE crawled          {{TRUE, FALSE}}
+    @ATTRIBUTE version          {{{','.join(map(repr, versions))}}}
+    @ATTRIBUTE out_degree       NUMERIC
+    @ATTRIBUTE in_degree        NUMERIC
+    @ATTRIBUTE mutual_neighbors NUMERIC
+    @ATTRIBUTE raw_centrality   NUMERIC
+    @ATTRIBUTE norm_centrality  NUMERIC
+    
+    @DATA
+    """)
             else:
-                if loc.city is None or loc.city == "None":
+                # Assume CSV format
+                print("ip,continent,country,city,crawled,version,out_degree,in_degree,mutual_neighbors,raw_centrality,"
+                      "norm_centrality")
+            for node in tqdm(graph, desc="writing", unit=" nodes", leave=False):
+                loc = node.get_location()
+                if loc is None:
                     city = "?"
-                else:
-                    city = loc.city
-                if loc.country_code is None:
                     country = "?"
-                else:
-                    country = loc.country_code
-                if loc.continent_code is None:
                     continent = "?"
                 else:
-                    continent = loc.continent_code
-                if args.format == "arff":
-                    city = repr(city)
-                    country = repr(country)
-                    continent = repr(continent)
-            version = node.get_version()
-            if version is None:
-                version_str = "?"
-            else:
-                version_str = version.version
-                if args.format == "arff":
-                    version_str = repr(version_str)
-            num_mutual_neighbors = sum(1 for neighbor in graph.neighbors(node) if graph.has_edge(neighbor, node))
-            print(f"{node.ip!s},{continent},{country},{city},{['TRUE', 'FALSE'][node.last_crawled() is None]},"
-                  f"{version_str},{graph.out_degree[node]},{graph.in_degree[node]},{num_mutual_neighbors},"
-                  f"{page_rank[node]}")
+                    if loc.city is None or loc.city == "None":
+                        city = "?"
+                    else:
+                        city = loc.city
+                    if loc.country_code is None:
+                        country = "?"
+                    else:
+                        country = loc.country_code
+                    if loc.continent_code is None:
+                        continent = "?"
+                    else:
+                        continent = loc.continent_code
+                    if args.format == "arff":
+                        city = repr(city)
+                        country = repr(country)
+                        continent = repr(continent)
+                version = node.get_version()
+                if version is None:
+                    version_str = "?"
+                else:
+                    version_str = version.version
+                    if args.format == "arff":
+                        version_str = repr(version_str)
+                num_mutual_neighbors = sum(1 for neighbor in graph.neighbors(node) if graph.has_edge(neighbor, node))
+                if node in clean_page_rank:
+                    norm_centrality = clean_page_rank[node]
+                else:
+                    norm_centrality = 0.0
+                print(f"{node.ip!s},{continent},{country},{city},{['TRUE', 'FALSE'][node.last_crawled() is None]},"
+                      f"{version_str},{graph.out_degree[node]},{graph.in_degree[node]},{num_mutual_neighbors},"
+                      f"{page_rank[node]},{norm_centrality}")
+            t.update(1)
 
 
 class Topology(Command):
