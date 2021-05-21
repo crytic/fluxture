@@ -36,7 +36,9 @@ class NodeGroup(frozenset, Generic[N], FrozenSet[N]):
 
 class CrawlGraph(nx.DiGraph, Generic[N]):
     @staticmethod
-    def load(db: CrawlDatabase, only_crawled_nodes: bool = False) -> "CrawlGraph[CrawledNode]":
+    def load(
+            db: CrawlDatabase, only_crawled_nodes: bool = False, bidirectional_edges: bool = True
+    ) -> "CrawlGraph[CrawledNode]":
         graph = CrawlGraph()
         for node in tqdm(db.nodes, leave=False, desc="Constructing Topology", unit=" nodes"):
             if only_crawled_nodes and node.last_crawled is None:
@@ -46,8 +48,8 @@ class CrawlGraph(nx.DiGraph, Generic[N]):
                 if only_crawled_nodes and to_node.last_crawled is None:
                     continue
                 graph.add_edge(node, to_node)
-                # assume that all edges are bidirectional
-                graph.add_edge(to_node, node)
+                if bidirectional_edges:
+                    graph.add_edge(to_node, node)
         return graph
 
     def to_dot(
@@ -124,6 +126,81 @@ class GroupedCrawlGraph(CrawlGraph[NodeGroup[N]], Generic[N]):
             group: sum(parent_ranks[node] for node in group) for group in self.nodes
         }
         return OrderedDict(sorted(ranks.items(), key=lambda item: item[1], reverse=True))
+
+
+class ExportCommand(Command):
+    name = "export"
+    help = "export the crawl data"
+
+    def __init_arguments__(self, parser: ArgumentParser):
+        parser.add_argument("CRAWL_DB_FILE", type=str, help="path to the crawl database")
+        parser.add_argument("--format", "-f", choices=["arff", "csv"], default="arff", help="the format in which to "
+                                                                                            "export the data")
+
+    def run(self, args):
+        graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE), only_crawled_nodes=False, bidirectional_edges=False)
+        page_rank = graph.pagerank()
+
+        cities: Set[str] = {"?"}
+        countries: Set[str] = {"?"}
+        continents: Set[str] = {"?"}
+        for node in graph:
+            loc = node.get_location()
+            if loc is not None:
+                if loc.city is not None:
+                    cities.add(loc.city)
+                if loc.country_code is not None:
+                    countries.add(loc.country_code)
+                if loc.continent_code is not None:
+                    continents.add(loc.continent_code)
+
+        if args.format == "arff":
+            print(f"""% Fluxture crawl
+% Source: {args.CRAWL_DB_FILE}
+
+@RELATION topology
+
+@ATTRIBUTE ip               STRING
+@ATTRIBUTE continent        {{{','.join(map(repr, continents))}}}
+@ATTRIBUTE country          {{{','.join(map(repr, countries))}}}
+@ATTRIBUTE city             {{{','.join(map(repr, cities))}}}
+@ATTRIBUTE crawled          {{TRUE, FALSE}}
+@ATTRIBUTE out_degree       NUMERIC
+@ATTRIBUTE in_degree        NUMERIC
+@ATTRIBUTE mutual_neighbors NUMERIC
+@ATTRIBUTE centrality       NUMERIC
+
+@DATA
+""")
+        else:
+            # Assume CSV format
+            print("ip,continent,country,city,crawled,out_degree,in_degree,mutual_neighbors,centrality")
+        for node in tqdm(graph, desc="exporting", unit=" nodes", leave=False):
+            loc = node.get_location()
+            if loc is None:
+                city = "?"
+                country = "?"
+                continent = "?"
+            else:
+                if loc.city is None or loc.city == "None":
+                    city = "?"
+                else:
+                    city = loc.city
+                if loc.country_code is None:
+                    country = "?"
+                else:
+                    country = loc.country_code
+                if loc.continent_code is None:
+                    continent = "?"
+                else:
+                    continent = loc.continent_code
+                if args.format == "arff":
+                    city = repr(city)
+                    country = repr(country)
+                    continent = repr(continent)
+            num_mutual_neighbors = sum(1 for neighbor in graph.neighbors(node) if graph.has_edge(neighbor, node))
+            print(f"{node.ip!s},{continent},{country},{city},{['TRUE', 'FALSE'][node.last_crawled is None]},"
+                  f"{graph.out_degree[node]},{graph.in_degree[node]},{num_mutual_neighbors},{page_rank[node]}")
 
 
 class Topology(Command):
@@ -204,7 +281,7 @@ class Topology(Command):
                 print(f"[{node.ip!s}]:{node.port}\t{rank}\t1\t{1 / num_nodes * 100.0:0.1f}")
         print(f"Edge Connectivity: {nx.edge_connectivity(graph)}")
         print(f"Out-degree: {Statistics((graph.out_degree[node] for node in graph))!s}")
-        print(f"Average shortest path length: {nx.average_shortest_path_length(graph)}")
+        # print(f"Average shortest path length: {nx.average_shortest_path_length(graph)}")
         if not args.degree_dist:
             return 0
 
