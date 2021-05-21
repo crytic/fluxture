@@ -197,6 +197,10 @@ class Crawler(Generic[N], metaclass=ABCMeta):
     def do_crawl(self, seeds: Optional[Iterable[N]] = None):
         asyncio.run(self._crawl(seeds))
 
+    def crawl_node(self, node: N) -> FrozenSet[N]:
+        """Return the neighbors for a single node"""
+        return asyncio.run(self._crawl_node(node))
+
 
 CITY_DB_PARSER: ArgumentParser = ArgumentParser(add_help=False)
 
@@ -222,6 +226,25 @@ class UpdateMaxmindDBCommand(Command):
             sys.exit(1)
         save_path = download_maxmind_db(args.maxmind_license_key, args.city_db_path)
         print(f"Geolocation database saved to {save_path}")
+
+
+class NodeCommand(Command):
+    name = "node"
+    help = "connect to and interrogate a specific node"
+
+    def __init_arguments__(self, parser: ArgumentParser):
+        parser.add_argument("BLOCKCHAIN_NAME", type=str, help="the name of the blockchain to crawl",
+                            choices=BLOCKCHAINS.keys())
+        parser.add_argument("IP_ADDRESS", type=str, help="IP address of the node to interrogate")
+
+    def run(self, args: Namespace):
+        blockchain_type = BLOCKCHAINS[args.BLOCKCHAIN_NAME]
+        with CrawlDatabase() as db:
+            for neighbor in sorted(str(n.address) for n in Crawler(
+                    blockchain=blockchain_type(),
+                    crawl=DatabaseCrawl(blockchain_type.node_type, db),
+            ).crawl_node(blockchain_type.node_type(args.IP_ADDRESS))):
+                print(neighbor)
 
 
 class CrawlCommand(Command):
