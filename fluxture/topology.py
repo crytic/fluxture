@@ -144,6 +144,7 @@ class ExportCommand(Command):
         cities: Set[str] = {"?"}
         countries: Set[str] = {"?"}
         continents: Set[str] = {"?"}
+        versions: Set[str] = {"?"}
         for node in graph:
             loc = node.get_location()
             if loc is not None:
@@ -153,6 +154,9 @@ class ExportCommand(Command):
                     countries.add(loc.country_code)
                 if loc.continent_code is not None:
                     continents.add(loc.continent_code)
+            version = node.get_version()
+            if version is not None:
+                versions.add(version)
 
         if args.format == "arff":
             print(f"""% Fluxture crawl
@@ -165,6 +169,7 @@ class ExportCommand(Command):
 @ATTRIBUTE country          {{{','.join(map(repr, countries))}}}
 @ATTRIBUTE city             {{{','.join(map(repr, cities))}}}
 @ATTRIBUTE crawled          {{TRUE, FALSE}}
+@ATTRIBUTE version          {{{','.join(map(repr, versions))}}}
 @ATTRIBUTE out_degree       NUMERIC
 @ATTRIBUTE in_degree        NUMERIC
 @ATTRIBUTE mutual_neighbors NUMERIC
@@ -174,7 +179,7 @@ class ExportCommand(Command):
 """)
         else:
             # Assume CSV format
-            print("ip,continent,country,city,crawled,out_degree,in_degree,mutual_neighbors,centrality")
+            print("ip,continent,country,city,crawled,version,out_degree,in_degree,mutual_neighbors,centrality")
         for node in tqdm(graph, desc="exporting", unit=" nodes", leave=False):
             loc = node.get_location()
             if loc is None:
@@ -198,9 +203,17 @@ class ExportCommand(Command):
                     city = repr(city)
                     country = repr(country)
                     continent = repr(continent)
+            version = node.get_version()
+            if version is None:
+                version_str = "?"
+            else:
+                version_str = version.version
+                if args.format == "arff":
+                    version_str = repr(version_str)
             num_mutual_neighbors = sum(1 for neighbor in graph.neighbors(node) if graph.has_edge(neighbor, node))
             print(f"{node.ip!s},{continent},{country},{city},{['TRUE', 'FALSE'][node.last_crawled is None]},"
-                  f"{graph.out_degree[node]},{graph.in_degree[node]},{num_mutual_neighbors},{page_rank[node]}")
+                  f"{version_str},{graph.out_degree[node]},{graph.in_degree[node]},{num_mutual_neighbors},"
+                  f"{page_rank[node]}")
 
 
 class Topology(Command):
