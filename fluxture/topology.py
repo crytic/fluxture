@@ -3,11 +3,12 @@ from argparse import ArgumentParser
 from collections import defaultdict, OrderedDict
 from pathlib import Path
 from typing import (
-    Callable, Dict, FrozenSet, Generic, Hashable, Optional, OrderedDict as OrderedDictType, Set, TypeVar, Union
+    Callable, Dict, FrozenSet, Generic, Hashable, List, Optional, OrderedDict as OrderedDictType, Set, TypeVar, Union
 )
 
 import graphviz
 import networkx as nx
+import numpy as np
 from tqdm import tqdm
 
 from .crawl_schema import CrawledNode
@@ -115,6 +116,109 @@ class CrawlGraph(nx.DiGraph, Generic[N]):
         return graph
 
 
+class ProbabilisticWeightedCrawlGraph(Generic[N]):
+    """
+    A complete graph with nonexistent edges filled in with probabilistic weights.
+
+    Ideally this class would extend CrawlGraph (which extends nx.DiGraph), but NetworkX is too slow for dealing with
+    complete graphs, so we need to use numpy directly.
+
+    """
+    def __init__(self, parent: CrawlGraph[N], max_neighbor_percent: float = 0.23):
+        """
+        Converts the parent crawl graph to a weighted graph where weights correspond to the probability of an edge.
+
+        This is useful for clients like BitCoin Core which only report min(23%, 1000) peers.
+
+        """
+        if 1.0 < max_neighbor_percent <= 0.0:
+            raise ValueError("max_neighbor_percent must be in the range (0.0, 1.0]")
+        self.nodes: List[N] = list(parent.nodes)
+        self.node_indexes: Dict[N, int] = {node: i for i, node in enumerate(self.nodes)}
+        self.expected_actual_degrees: Dict[N, float] = {}
+        num_nodes = len(self.nodes)
+        self.adjacency = np.full((num_nodes, num_nodes), 0.0, dtype=np.float32)
+        for node, row in self.node_indexes.items():
+            degree = parent.out_degree[node]
+            expected_actual_degree = max(degree / max_neighbor_percent, 1.0)
+            self.expected_actual_degrees[node] = expected_actual_degree
+            # add all of the existing outgoing edges:
+            for neighbor in parent.neighbors(node):
+                self.adjacency[row][self.node_indexes[neighbor]] = 1.0
+        self.expected_total_edges: float = sum(self.expected_actual_degrees.values())
+        # now add the probabilistic edges
+        for node, row in tqdm(self.node_indexes.items(), leave=False, desc="building probabilistic graph",
+                              unit=" nodes", total=len(self.nodes)):
+            existing_edges = parent.out_degree[node]
+            weight_to_add = self.expected_actual_degrees[node] - existing_edges
+            num_new_neighbors = num_nodes - 1 - existing_edges
+            if weight_to_add <= 0.0 or num_new_neighbors <= 0:
+                # this node does not need any more edges
+                continue
+            weight_per_new_neighbor = weight_to_add / num_new_neighbors
+            self.adjacency[row, self.adjacency[row][0::] <= 0] = weight_per_new_neighbor
+
+    def __len__(self):
+        return len(self.nodes)
+
+    def __iter__(self):
+        return iter(self.nodes)
+
+    def __getitem__(self, index: int) -> N:
+        return self.nodes[index]
+
+    def pagerank(self, alpha: float = 0.85, max_iterations: int = 100, tolerance: float = 1.0e-6) -> Dict[N, float]:
+        # use power iteration because calculating the Eigenvectors is too slow for large matrices
+
+        with tqdm(desc="calculating stationary distributon", total=2, leave=False) as t:
+            n = len(self)
+            if n == 0:
+                return {}
+            initial_weight = 1.0 / n
+            pi = np.full((n,), initial_weight)
+
+            with tqdm(desc="normalizing adjacency matrix", total=1, initial=1, leave=False):
+                # take the L1 norm of the adjancency matrix
+                # so all rows sum to 1
+                normalized_adj = self.adjacency / np.linalg.norm(self.adjacency, ord=1, axis=1)
+
+            t.update(1)
+
+            with tqdm(max_iterations, desc="power iteration", leave=False, unit="error") as r:
+                last_diff: Optional[float] = None
+                for _ in range(max_iterations):
+                    # portion we give away:
+                    pi_prime = np.dot(normalized_adj, (1.0 - alpha) * pi)
+                    # add in the portion we keep:
+                    pi_prime = pi * alpha + pi_prime
+
+                    # take the L1 norm of the vector (so all of its values sum to 1):
+                    pi_prime = pi_prime / np.linalg.norm(pi_prime, ord=1)
+
+                    # check for convergence by comparing the previous value with the new value
+                    diff = np.linalg.norm(pi_prime - pi, ord=1)
+                    if last_diff is None:
+                        r.total = diff
+                        last_diff = diff
+                        r.update(0)
+                    elif diff > last_diff:
+                        # TODO: Maybe bail early because we are diverging?
+                        pass
+                    else:
+                        r.update(last_diff - diff)
+                        last_diff = diff
+                    pi = pi_prime
+                    if diff < n * tolerance:
+                        # we are done!
+                        break
+                else:
+                    raise ValueError(f"Power iteration failed to converge in {max_iterations} iterations")
+
+            t.update(1)
+
+            return {self.nodes[i]: v for i, v in enumerate(pi)}
+
+
 class GroupedCrawlGraph(CrawlGraph[NodeGroup[N]], Generic[N]):
     def __init__(self, parent: CrawlGraph[N]):
         super().__init__()
@@ -142,15 +246,9 @@ class ExportCommand(Command):
             graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE), only_crawled_nodes=False,
                                     bidirectional_edges=False)
             t.update(1)
-            clean_graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE), only_crawled_nodes=True,
-                                          bidirectional_edges=True)
+            weighted_graph = ProbabilisticWeightedCrawlGraph(graph)
             t.update(1)
-            with tqdm(desc="calculating stationary distribution", leave=False, unit=" steps", total=2) as s:
-                page_rank = graph.pagerank()
-                s.update(1)
-                clean_page_rank = clean_graph.pagerank()
-                s.update(1)
-            del clean_graph
+            weighted_page_rank = weighted_graph.pagerank()
             t.update(1)
 
             cities: Set[str] = {"?"}
@@ -185,15 +283,13 @@ class ExportCommand(Command):
     @ATTRIBUTE out_degree       NUMERIC
     @ATTRIBUTE in_degree        NUMERIC
     @ATTRIBUTE mutual_neighbors NUMERIC
-    @ATTRIBUTE raw_centrality   NUMERIC
-    @ATTRIBUTE norm_centrality  NUMERIC
+    @ATTRIBUTE centrality       NUMERIC
     
     @DATA
     """)
             else:
                 # Assume CSV format
-                print("ip,continent,country,city,crawled,version,out_degree,in_degree,mutual_neighbors,raw_centrality,"
-                      "norm_centrality")
+                print("ip,continent,country,city,crawled,version,out_degree,in_degree,mutual_neighbors,centrality")
             for node in tqdm(graph, desc="writing", unit=" nodes", leave=False):
                 loc = node.get_location()
                 if loc is None:
@@ -225,13 +321,9 @@ class ExportCommand(Command):
                     if args.format == "arff":
                         version_str = repr(version_str)
                 num_mutual_neighbors = sum(1 for neighbor in graph.neighbors(node) if graph.has_edge(neighbor, node))
-                if node in clean_page_rank:
-                    norm_centrality = clean_page_rank[node]
-                else:
-                    norm_centrality = 0.0
                 print(f"{node.ip!s},{continent},{country},{city},{['TRUE', 'FALSE'][node.last_crawled() is None]},"
                       f"{version_str},{graph.out_degree[node]},{graph.in_degree[node]},{num_mutual_neighbors},"
-                      f"{page_rank[node]},{norm_centrality}")
+                      f"{weighted_page_rank[node]}")
             t.update(1)
 
 
