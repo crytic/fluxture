@@ -45,9 +45,9 @@ class CrawledNode(Model["CrawlDatabase"]):
     def last_crawled(self) -> Optional[DateTime]:
         max_edge = Cursor(
             self.db.edges,
-            "SELECT * FROM edges WHERE from_node=? AND "
-            "timestamp=(SELECT max(timestamp) FROM edges WHERE from_node=?) LIMIT=1",
-            (self.rowid, self.rowid)
+            "SELECT a.* FROM edges a LEFT OUTER JOIN edges b ON a.rowid = b.rowid AND a.timestamp < b.timestamp "
+            "WHERE b.rowid is NULL AND a.from_node = ? LIMIT 1",
+            (self.rowid,)
         ).fetchone()
         if max_edge is None:
             return None
@@ -57,10 +57,10 @@ class CrawledNode(Model["CrawlDatabase"]):
         return {
             edge.to_node.row
             for edge in Cursor(
-                    self.db.edges,
-                    "SELECT * FROM edges WHERE from_node=? AND "
-                    "timestamp=(SELECT max(timestamp) FROM edges WHERE from_node=?)",
-                    (self.rowid, self.rowid)
+                self.db.edges,
+                "SELECT a.* FROM edges a LEFT OUTER JOIN edges b ON a.rowid = b.rowid AND a.timestamp < b.timestamp "
+                "WHERE b.rowid is NULL AND a.from_node = ?",
+                (self.rowid,)
             )
         }
 

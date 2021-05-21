@@ -41,11 +41,11 @@ class CrawlGraph(nx.DiGraph, Generic[N]):
     ) -> "CrawlGraph[CrawledNode]":
         graph = CrawlGraph()
         for node in tqdm(db.nodes, leave=False, desc="Constructing Topology", unit=" nodes"):
-            if only_crawled_nodes and node.last_crawled is None:
+            if only_crawled_nodes and node.last_crawled() is None:
                 continue
             graph.add_node(node)
             for to_node in node.get_latest_edges():
-                if only_crawled_nodes and to_node.last_crawled is None:
+                if only_crawled_nodes and to_node.last_crawled() is None:
                     continue
                 graph.add_edge(node, to_node)
                 if bidirectional_edges:
@@ -211,7 +211,7 @@ class ExportCommand(Command):
                 if args.format == "arff":
                     version_str = repr(version_str)
             num_mutual_neighbors = sum(1 for neighbor in graph.neighbors(node) if graph.has_edge(neighbor, node))
-            print(f"{node.ip!s},{continent},{country},{city},{['TRUE', 'FALSE'][node.last_crawled is None]},"
+            print(f"{node.ip!s},{continent},{country},{city},{['TRUE', 'FALSE'][node.last_crawled() is None]},"
                   f"{version_str},{graph.out_degree[node]},{graph.in_degree[node]},{num_mutual_neighbors},"
                   f"{page_rank[node]}")
 
