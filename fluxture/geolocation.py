@@ -126,9 +126,12 @@ class GeoIP2Locator:
 
     def locate(self, ip: Union[IPv6Address, str, PythonIPv4, PythonIPv6]) -> Geolocation:
         with self:
-            city = self._geoip.city(str(ip))
+            ipv6 = IPv6Address(ip)
+            city = self._geoip.city(str(ipv6))
+            if city.location.latitude is None or city.location.longitude is None:
+                raise AddressNotFoundError(str(ip))
             return Geolocation(
-                ip=IPv6Address(ip),
+                ip=ipv6,
                 city=city.city.name,
                 country_code=city.country.iso_code,
                 continent_code=city.continent.code,

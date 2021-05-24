@@ -8,6 +8,9 @@ from collections import deque
 from inspect import isabstract
 from typing import Any, AsyncIterator, Coroutine, Deque, Dict, FrozenSet, Generic, Iterable, List, Optional, Union
 
+from geoip2.errors import AddressNotFoundError
+from tqdm import tqdm
+
 from .blockchain import Blockchain, BLOCKCHAINS, Miner, Node
 from .crawl_schema import Crawl, CrawlDatabase, DatabaseCrawl, DateTime, N
 from .fluxture import Command
@@ -245,6 +248,57 @@ class NodeCommand(Command):
                     crawl=DatabaseCrawl(blockchain_type.node_type, db),
             ).crawl_node(blockchain_type.node_type(args.IP_ADDRESS))):
                 print(neighbor)
+
+
+class GeolocateCommand(Command):
+    name = "geolocate"
+    help = "re-run geolocation for already crawled nodes (e.g., after a call to the `update-geo-db` command)"
+    parent_parsers = CITY_DB_PARSER,
+
+    def __init_arguments__(self, parser: ArgumentParser):
+        parser.add_argument("CRAWL_DATABASE", type=str, help="path to the crawl database to update")
+        parser.add_argument("--process-all", "-a", action="store_true", help="by default, this command only geolocates "
+                                                                             "nodes that do not already have a "
+                                                                             "location; this option will re-process "
+                                                                             "all nodes")
+
+    def run(self, args: Namespace):
+        geo = GeoIP2Locator(args.city_db_path, args.maxmind_license_key)
+
+        with CrawlDatabase(args.CRAWL_DATABASE) as db:
+            added = 0
+            updated = 0
+            with tqdm(db.nodes, leave=False, desc="geolocating", unit=" nodes") as t:
+                for node in t:
+                    old_location = node.get_location()
+                    was_none = old_location is None
+                    if not args.process_all and not was_none:
+                        continue
+                    try:
+                        new_location = geo.locate(node.ip)
+                    except AddressNotFoundError:
+                        continue
+                    if new_location is not None:
+                        if was_none:
+                            db.locations.append(new_location)
+                            added += 1
+                        elif any(
+                                    a != b for (field_name_a, a), (field_name_b, b) in
+                                    zip(new_location.items(), old_location.items())
+                                    if (
+                                            field_name_a != "rowid" and field_name_b != "rowid" and
+                                            field_name_a != "timestamp" and field_name_b != "timestamp"
+                                    )
+                        ):
+                            # the location was updated
+                            new_location.rowid = old_location.rowid
+                            new_location.db = db
+                            db.locations.update(new_location)
+                            updated += 1
+                        else:
+                            continue
+                        t.desc = f"geolocating ({added} added, {updated} updated)"
+            print(f"Added {added} new locations and updated {updated} existing ones")
 
 
 class CrawlCommand(Command):
