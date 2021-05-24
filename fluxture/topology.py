@@ -358,7 +358,9 @@ class Topology(Command):
             return 1
         elif args.group_by == "ip":
             graph = raw_graph
-            page_rank: OrderedDictType[Union[CrawledNode, NodeGroup[CrawledNode]], float] = graph.pagerank()
+            # OrderedDictType[Union[CrawledNode, NodeGroup[CrawledNode]], float]
+            page_rank: Dict[Union[CrawledNode, NodeGroup[CrawledNode]], float] = \
+                ProbabilisticWeightedCrawlGraph(graph).pagerank()
         else:
             if args.group_by == "city":
                 def grouper(n: CrawledNode) -> str:
@@ -388,8 +390,9 @@ class Topology(Command):
                 raise NotImplementedError(f"TODO: Implement support for --group-by={args.group_by}")
             graph = raw_graph.group_by(grouper)
             if args.conglomerate:
-                page_rank = graph.pagerank()
+                page_rank = ProbabilisticWeightedCrawlGraph(graph).pagerank()
             else:
+                graph.parent = ProbabilisticWeightedCrawlGraph(raw_graph)
                 page_rank = graph.grouped_pagerank()
         # graph.to_dot().save("graph.dot")
         graph.prune()
