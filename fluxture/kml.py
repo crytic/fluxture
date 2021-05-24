@@ -14,7 +14,7 @@ from .crawler import CrawlDatabase
 from .crawl_schema import CrawledNode
 from .fluxture import Command
 from .geolocation import Geolocation, Location
-from .topology import CrawlGraph
+from .topology import CrawlGraph, ProbabilisticWeightedCrawlGraph
 
 
 KML_NS = "{http://www.opengis.net/kml/2.2}"
@@ -296,7 +296,7 @@ class ToKML(Command):
             if not args.no_pagerank:
                 graph = CrawlGraph.load(db)
                 graph.prune()
-                pr = graph.pagerank()
+                pr = ProbabilisticWeightedCrawlGraph(graph).pagerank()
                 max_rank = max(pr.values())
                 if max_rank == 0.0:
                     max_rank = 1.0
