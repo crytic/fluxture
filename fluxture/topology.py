@@ -3,7 +3,8 @@ from argparse import ArgumentParser
 from collections import defaultdict, OrderedDict
 from pathlib import Path
 from typing import (
-    Callable, Dict, FrozenSet, Generic, Hashable, List, Optional, OrderedDict as OrderedDictType, Set, TypeVar, Union
+    Callable, Dict, FrozenSet, Generic, Hashable, Iterable, List, Optional, OrderedDict as OrderedDictType, Set,
+    TypeVar, Union
 )
 
 import graphviz
@@ -193,9 +194,10 @@ class ProbabilisticWeightedCrawlGraph(Generic[N]):
 
             t.update(1)
 
-            with tqdm(max_iterations, desc="power iteration", leave=False, unit="error") as r:
+            with tqdm(max_iterations, desc="power iteration", leave=False, unit=" error") as r:
                 last_diff: Optional[float] = None
-                for _ in range(max_iterations):
+                for iteration in range(max_iterations):
+                    r.desc = f"power iteration {iteration + 1}"
                     # portion we give away:
                     pi_prime = np.dot(normalized_adj, (1.0 - alpha) * pi)
                     # add in the portion we keep:
@@ -241,6 +243,74 @@ class GroupedCrawlGraph(CrawlGraph[NodeGroup[N]], Generic[N]):
         return OrderedDict(sorted(ranks.items(), key=lambda item: item[1], reverse=True))
 
 
+# From: https://cbeci.org/mining_map
+AVERAGE_SHARE_OF_HASHRATE = {
+    "CN": 0.6508,
+    "US": 0.0742,
+    "RU": 0.0690,
+    "KZ": 0.0617,
+    "MY": 0.0433,
+    "IR": 0.0382,
+    "CA": 0.0082,
+    "DE": 0.0056,
+    "NO": 0.0048,
+    "VE": 0.0042
+}
+
+def estimate_miner_probability(
+        nodes: Iterable[CrawledNode],
+        hashrates_by_country: Dict[str, float] = AVERAGE_SHARE_OF_HASHRATE
+) -> Dict[N, float]:
+    """Calculates the probability of each node being a miner based upon the global distribution of miners"""
+    hashrate_sum = sum(hashrates_by_country.values())
+    if 0 > hashrate_sum > 1.0:
+        raise ValueError("The hashrates must sum to a value in the range [0, 1]")
+    hashrate_remainder = 1.0 - hashrate_sum
+    nodes_by_country: Dict[str, List[CrawledNode]] = defaultdict(list)
+    nodes_not_in_mapping = 0
+    with tqdm(desc="estimating miner distribution", total=2, initial=1, leave=False, unit=" steps") as t:
+        for node in tqdm(nodes, desc="geolocating", leave=False, unit=" nodes"):
+            loc = node.get_location()
+            if loc is None or loc.country_code is None:
+                nodes_by_country[""].append(node)
+                nodes_not_in_mapping += 1
+            else:
+                nodes_by_country[loc.country_code].append(node)
+                if loc.country_code not in hashrates_by_country:
+                    nodes_not_in_mapping += 1
+        t.update(1)
+        ret: Dict[CrawledNode, float] = {}
+        for country_code, nodes_in_country in tqdm(
+                nodes_by_country.items(),
+                desc="extrapolating hashrate",
+                leave=False,
+                unit=" countries"
+        ):
+            if not nodes_in_country:
+                # there are no nodes in this country (this should never happen)
+                continue
+            elif country_code in hashrates_by_country:
+                probability = hashrates_by_country[country_code] / len(nodes_in_country)
+            elif nodes_not_in_mapping == 0:
+                # this should never happen
+                continue
+            else:
+                probability = hashrate_remainder / nodes_not_in_mapping
+            ret.update({node: probability for node in nodes_in_country})
+    return ret
+
+
+def expected_average_shortest_distance_to_miner(
+        crawl_graph: Union[ProbabilisticWeightedCrawlGraph[CrawledNode], CrawlGraph[CrawledNode]],
+        miner_probability: Optional[Dict[CrawledNode, float]] = None
+) -> Dict[CrawledNode, float]:
+    """Estimates the average shortest distance to a miner for each node in the graph"""
+    if not isinstance(crawl_graph, ProbabilisticWeightedCrawlGraph):
+        crawl_graph = ProbabilisticWeightedCrawlGraph(crawl_graph)
+    if miner_probability is None:
+        miner_probability = estimate_miner_probability(crawl_graph)
+
+
 class ExportCommand(Command):
     name = "export"
     help = "export the crawl data"
@@ -251,13 +321,19 @@ class ExportCommand(Command):
                                                                                             "export the data")
 
     def run(self, args):
-        with tqdm(desc="exporting", leave=False, unit=" steps", total=4) as t:
+        with tqdm(desc="exporting", leave=False, unit=" steps", total=6) as t:
             graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE), only_crawled_nodes=False,
                                     bidirectional_edges=False)
             t.update(1)
             weighted_graph = ProbabilisticWeightedCrawlGraph(graph)
             t.update(1)
             weighted_page_rank = weighted_graph.pagerank()
+            t.update(1)
+
+
+            miner_probability = estimate_miner_probability(weighted_graph)
+            t.update(1)
+            _ = expected_average_shortest_distance_to_miner(weighted_graph, miner_probability)
             t.update(1)
 
             cities: Set[str] = {"?"}
@@ -283,22 +359,24 @@ class ExportCommand(Command):
     
     @RELATION topology
     
-    @ATTRIBUTE ip               STRING
-    @ATTRIBUTE continent        {{{','.join(map(repr, continents))}}}
-    @ATTRIBUTE country          {{{','.join(map(repr, countries))}}}
-    @ATTRIBUTE city             {{{','.join(map(repr, cities))}}}
-    @ATTRIBUTE crawled          {{TRUE, FALSE}}
-    @ATTRIBUTE version          {{{','.join(map(repr, versions))}}}
-    @ATTRIBUTE out_degree       NUMERIC
-    @ATTRIBUTE in_degree        NUMERIC
-    @ATTRIBUTE mutual_neighbors NUMERIC
-    @ATTRIBUTE centrality       NUMERIC
+    @ATTRIBUTE ip                STRING
+    @ATTRIBUTE continent         {{{','.join(map(repr, continents))}}}
+    @ATTRIBUTE country           {{{','.join(map(repr, countries))}}}
+    @ATTRIBUTE city              {{{','.join(map(repr, cities))}}}
+    @ATTRIBUTE crawled           {{TRUE, FALSE}}
+    @ATTRIBUTE version           {{{','.join(map(repr, versions))}}}
+    @ATTRIBUTE out_degree        NUMERIC
+    @ATTRIBUTE in_degree         NUMERIC
+    @ATTRIBUTE mutual_neighbors  NUMERIC
+    @ATTRIBUTE centrality        NUMERIC
+    @ATTRIBUTE miner_probability NUMERIC
     
     @DATA
     """)
             else:
                 # Assume CSV format
-                print("ip,continent,country,city,crawled,version,out_degree,in_degree,mutual_neighbors,centrality")
+                print("ip,continent,country,city,crawled,version,out_degree,in_degree,mutual_neighbors,centrality,"
+                      "miner_probability")
             for node in tqdm(graph, desc="writing", unit=" nodes", leave=False):
                 loc = node.get_location()
                 if loc is None:
@@ -332,7 +410,7 @@ class ExportCommand(Command):
                 num_mutual_neighbors = sum(1 for neighbor in graph.neighbors(node) if graph.has_edge(neighbor, node))
                 print(f"{node.ip!s},{continent},{country},{city},{['TRUE', 'FALSE'][node.last_crawled() is None]},"
                       f"{version_str},{graph.out_degree[node]},{graph.in_degree[node]},{num_mutual_neighbors},"
-                      f"{weighted_page_rank[node]}")
+                      f"{weighted_page_rank[node]},{miner_probability[node]}")
             t.update(1)
 
 
