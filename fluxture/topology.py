@@ -140,16 +140,25 @@ class ProbabilisticWeightedCrawlGraph(Generic[N]):
         self.adjacency = np.full((num_nodes, num_nodes), 0.0, dtype=np.float32)
         for node, row in self.node_indexes.items():
             degree = parent.out_degree[node]
+            if degree == 0:
+                # this means we didn't crawl the node yet, so use its incoming edges as bidirectional
+                degree = parent.in_degree[node]
+                for neighbor in parent.predecessors(node):
+                    self.adjacency[row][self.node_indexes[neighbor]] = 1.0
+            else:
+                # add all of the existing outgoing edges:
+                for neighbor in parent.neighbors(node):
+                    self.adjacency[row][self.node_indexes[neighbor]] = 1.0
             expected_actual_degree = max(degree / max_neighbor_percent, 1.0)
             self.expected_actual_degrees[node] = expected_actual_degree
-            # add all of the existing outgoing edges:
-            for neighbor in parent.neighbors(node):
-                self.adjacency[row][self.node_indexes[neighbor]] = 1.0
         self.expected_total_edges: float = sum(self.expected_actual_degrees.values())
         # now add the probabilistic edges
         for node, row in tqdm(self.node_indexes.items(), leave=False, desc="building probabilistic graph",
                               unit=" nodes", total=len(self.nodes)):
             existing_edges = parent.out_degree[node]
+            if existing_edges == 0:
+                # this means we didn't crawl node yet, so assume the edges are bidirectional:
+                existing_edges = parent.in_degree[node]
             weight_to_add = self.expected_actual_degrees[node] - existing_edges
             num_new_neighbors = num_nodes - 1 - existing_edges
             if weight_to_add <= 0.0 or num_new_neighbors <= 0:
