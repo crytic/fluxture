@@ -12,7 +12,7 @@ import networkx as nx
 import numpy as np
 from tqdm import tqdm, trange
 
-from .crawl_schema import CrawledNode
+from .crawl_schema import CrawledNode, Version
 from .crawler import CrawlDatabase
 from .fluxture import Command
 from .statistics import Statistics
@@ -395,24 +395,23 @@ class ExportCommand(Command):
             )
             t.update(1)
 
-            cities: Set[str] = {"?"}
-            countries: Set[str] = {"?"}
-            continents: Set[str] = {"?"}
-            versions: Set[str] = {"?"}
-            for node in graph:
-                loc = node.get_location()
-                if loc is not None:
-                    if loc.city is not None:
-                        cities.add(loc.city)
-                    if loc.country_code is not None:
-                        countries.add(loc.country_code)
-                    if loc.continent_code is not None:
-                        continents.add(loc.continent_code)
-                version = node.get_version()
-                if version is not None:
-                    versions.add(version)
-
             if args.format == "arff":
+                cities: Set[str] = {"?"}
+                countries: Set[str] = {"?"}
+                continents: Set[str] = {"?"}
+                versions: Set[str] = {"?"}
+                for node in graph:
+                    loc = node.get_location()
+                    if loc is not None:
+                        if loc.city is not None:
+                            cities.add(loc.city)
+                        if loc.country_code is not None:
+                            countries.add(loc.country_code)
+                        if loc.continent_code is not None:
+                            continents.add(loc.continent_code)
+                    version = node.get_version()
+                    if version is not None:
+                        versions.add(repr(version.version))
                 print(f"""% Fluxture crawl
     % Source: {args.CRAWL_DB_FILE}
     
@@ -423,7 +422,7 @@ class ExportCommand(Command):
     @ATTRIBUTE country                {{{','.join(map(repr, countries))}}}
     @ATTRIBUTE city                   {{{','.join(map(repr, cities))}}}
     @ATTRIBUTE crawled                {{TRUE, FALSE}}
-    @ATTRIBUTE version                {{{','.join(map(repr, versions))}}}
+    @ATTRIBUTE version                {{{','.join(versions)}}}
     @ATTRIBUTE out_degree             NUMERIC
     @ATTRIBUTE in_degree              NUMERIC
     @ATTRIBUTE mutual_neighbors       NUMERIC
