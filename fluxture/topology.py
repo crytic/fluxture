@@ -187,6 +187,8 @@ class ProbabilisticWeightedCrawlGraph(Generic[N]):
         results = adj.copy()
         prior_probabilities = adj.copy()
         np.fill_diagonal(prior_probabilities, 1.0)
+        first_residuals: Optional[float] = None
+        last_residuals: Optional[float] = None
         for i in trange(2, len(self), desc="probabilistic shortest path", unit=" distances", leave=False):
             with tqdm(desc="iteration", total=6, unit=" steps", leave=False, initial=1) as t:
                 adj = adj @ self.adjacency
@@ -199,6 +201,17 @@ class ProbabilisticWeightedCrawlGraph(Generic[N]):
                 residuals = np.sum(additions)
                 t.update(1)
                 results += additions * i
+                if first_residuals is None:
+                    first_residuals = residuals  # type: ignore
+                    last_residuals = first_residuals
+                elif last_residuals is not None:
+                    if residuals > last_residuals:
+                        t.write("Warning: Residuals are not converging!", file=sys.stderr)
+                    else:
+                        last_residuals = residuals  # type: ignore
+                        if first_residuals > 0:
+                            convergence_percent = (1.0 - (last_residuals / first_residuals)) * 100.0
+                            t.desc = f"prob. shortest path ({convergence_percent:.2f}% converged)"
                 t.update(1)
                 # tqdm.write(f"Residuals: {residuals}\n", file=sys.stderr)
                 if residuals <= tolerance:
@@ -347,8 +360,7 @@ def expected_average_shortest_distance_to_miner(
     elif distances.ndim != 2 or distances.shape[0] != len(crawl_graph) or distances.shape[1] != len(crawl_graph):
         raise ValueError(f"distances is expected to be an {len(crawl_graph)}x{len(crawl_graph)} matrix")
     return {
-        node: sum(distances[index][i] * miner_probability[crawl_graph.nodes[i]]
-                  for i in trange(len(crawl_graph), desc="processing node", leave=False, unit=" neighbors"))
+        node: sum(distances[index][i] * miner_probability[crawl_graph.nodes[i]] for i in range(len(crawl_graph)))
         for node, index in tqdm((
             (n, crawl_graph.node_indexes[n]) for n in crawl_graph
         ), desc="calculating expected distance to miners", leave=False, unit=" nodes", total=len(crawl_graph))
