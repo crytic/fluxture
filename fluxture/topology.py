@@ -347,8 +347,11 @@ def expected_average_shortest_distance_to_miner(
     elif distances.ndim != 2 or distances.shape[0] != len(crawl_graph) or distances.shape[1] != len(crawl_graph):
         raise ValueError(f"distances is expected to be an {len(crawl_graph)}x{len(crawl_graph)} matrix")
     return {
-        node: sum(distances[crawl_graph.node_indexes[node]][i] * miner_probability[node] for i in range(len(crawl_graph)))
-        for node in crawl_graph
+        node: sum(distances[index][i] * miner_probability[node]
+                  for i in trange(len(crawl_graph), desc="processing node", leave=False, unit=" neighbors"))
+        for node, index in tqdm((
+            (n, crawl_graph.node_indexes[n]) for n in crawl_graph
+        ), desc="calculating expected distance to miners", leave=False, unit=" nodes", total=len(crawl_graph))
     }
 
 
