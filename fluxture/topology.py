@@ -10,7 +10,7 @@ from typing import (
 import graphviz
 import networkx as nx
 import numpy as np
-from tqdm import tqdm
+from tqdm import tqdm, trange
 
 from .crawl_schema import CrawledNode
 from .crawler import CrawlDatabase
@@ -177,6 +177,35 @@ class ProbabilisticWeightedCrawlGraph(Generic[N]):
     def __getitem__(self, index: int) -> N:
         return self.nodes[index]
 
+    def probabilistic_shortest_distances(self, tolerance: float = 1.0e-3) -> np.ndarray:
+        """Returns a distance matrix for the expected shortest path between nodes"""
+        # The values in our weighted adjacency are the probabilities that a path of length 1 exists between each node.
+        # self.adjacency * self.adjacency == the probability that there is a path of length 2
+        # In general, self.adjacency ** i == the probability that there is a path of length i
+        n = len(self)
+        adj = self.adjacency
+        results = adj.copy()
+        prior_probabilities = adj.copy()
+        np.fill_diagonal(prior_probabilities, 1.0)
+        for i in trange(2, len(self), desc="probabilistic shortest path", unit=" distances", leave=False):
+            with tqdm(desc="iteration", total=6, unit=" steps", leave=False, initial=1) as t:
+                adj = adj @ self.adjacency
+                t.update(1)
+                adj = adj.clip(min=0.0, max=1.0, out=adj)
+                t.update(1)
+                # (1 - prior_probabilities) == probability that the actual shortest path is >= i
+                additions = (1 - prior_probabilities) * adj
+                t.update(1)
+                residuals = np.sum(additions)
+                t.update(1)
+                results += additions * i
+                t.update(1)
+                # tqdm.write(f"Residuals: {residuals}\n", file=sys.stderr)
+                if residuals <= tolerance:
+                    break
+                prior_probabilities += additions
+        return results
+
     def pagerank(self, alpha: float = 0.85, max_iterations: int = 100, tolerance: float = 1.0e-6) -> Dict[N, float]:
         # use power iteration because calculating the Eigenvectors is too slow for large matrices
 
@@ -257,11 +286,14 @@ AVERAGE_SHARE_OF_HASHRATE = {
     "VE": 0.0042
 }
 
+
 def estimate_miner_probability(
         nodes: Iterable[CrawledNode],
-        hashrates_by_country: Dict[str, float] = AVERAGE_SHARE_OF_HASHRATE
+        hashrates_by_country: Optional[Dict[str, float]] = None
 ) -> Dict[N, float]:
     """Calculates the probability of each node being a miner based upon the global distribution of miners"""
+    if hashrates_by_country is None:
+        hashrates_by_country = AVERAGE_SHARE_OF_HASHRATE
     hashrate_sum = sum(hashrates_by_country.values())
     if 0 > hashrate_sum > 1.0:
         raise ValueError("The hashrates must sum to a value in the range [0, 1]")
@@ -302,6 +334,7 @@ def estimate_miner_probability(
 
 def expected_average_shortest_distance_to_miner(
         crawl_graph: Union[ProbabilisticWeightedCrawlGraph[CrawledNode], CrawlGraph[CrawledNode]],
+        distances: Optional[np.ndarray] = None,
         miner_probability: Optional[Dict[CrawledNode, float]] = None
 ) -> Dict[CrawledNode, float]:
     """Estimates the average shortest distance to a miner for each node in the graph"""
@@ -309,6 +342,14 @@ def expected_average_shortest_distance_to_miner(
         crawl_graph = ProbabilisticWeightedCrawlGraph(crawl_graph)
     if miner_probability is None:
         miner_probability = estimate_miner_probability(crawl_graph)
+    if distances is None:
+        distances = crawl_graph.probabilistic_shortest_distances()
+    elif distances.ndim != 2 or distances.shape[0] != len(crawl_graph) or distances.shape[1] != len(crawl_graph):
+        raise ValueError(f"distances is expected to be an {len(crawl_graph)}x{len(crawl_graph)} matrix")
+    return {
+        node: sum(distances[crawl_graph.node_indexes[node]][i] * miner_probability[node] for i in range(len(crawl_graph)))
+        for node in crawl_graph
+    }
 
 
 class ExportCommand(Command):
@@ -321,7 +362,7 @@ class ExportCommand(Command):
                                                                                             "export the data")
 
     def run(self, args):
-        with tqdm(desc="exporting", leave=False, unit=" steps", total=6) as t:
+        with tqdm(desc="exporting", leave=False, unit=" steps", total=7) as t:
             graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE), only_crawled_nodes=False,
                                     bidirectional_edges=False)
             t.update(1)
@@ -330,10 +371,13 @@ class ExportCommand(Command):
             weighted_page_rank = weighted_graph.pagerank()
             t.update(1)
 
-
             miner_probability = estimate_miner_probability(weighted_graph)
             t.update(1)
-            _ = expected_average_shortest_distance_to_miner(weighted_graph, miner_probability)
+            distances = weighted_graph.probabilistic_shortest_distances()
+            t.update(1)
+            avg_dist_to_miner = expected_average_shortest_distance_to_miner(
+                crawl_graph=weighted_graph, distances=distances, miner_probability=miner_probability
+            )
             t.update(1)
 
             cities: Set[str] = {"?"}
@@ -359,24 +403,26 @@ class ExportCommand(Command):
     
     @RELATION topology
     
-    @ATTRIBUTE ip                STRING
-    @ATTRIBUTE continent         {{{','.join(map(repr, continents))}}}
-    @ATTRIBUTE country           {{{','.join(map(repr, countries))}}}
-    @ATTRIBUTE city              {{{','.join(map(repr, cities))}}}
-    @ATTRIBUTE crawled           {{TRUE, FALSE}}
-    @ATTRIBUTE version           {{{','.join(map(repr, versions))}}}
-    @ATTRIBUTE out_degree        NUMERIC
-    @ATTRIBUTE in_degree         NUMERIC
-    @ATTRIBUTE mutual_neighbors  NUMERIC
-    @ATTRIBUTE centrality        NUMERIC
-    @ATTRIBUTE miner_probability NUMERIC
+    @ATTRIBUTE ip                     STRING
+    @ATTRIBUTE continent              {{{','.join(map(repr, continents))}}}
+    @ATTRIBUTE country                {{{','.join(map(repr, countries))}}}
+    @ATTRIBUTE city                   {{{','.join(map(repr, cities))}}}
+    @ATTRIBUTE crawled                {{TRUE, FALSE}}
+    @ATTRIBUTE version                {{{','.join(map(repr, versions))}}}
+    @ATTRIBUTE out_degree             NUMERIC
+    @ATTRIBUTE in_degree              NUMERIC
+    @ATTRIBUTE mutual_neighbors       NUMERIC
+    @ATTRIBUTE centrality             NUMERIC
+    @ATTRIBUTE miner_probability      NUMERIC
+    @ATTRIBUTE avg_shortest_dist      NUMERIC
+    @ATTRIBUTE expected_dist_to_miner NUMERIC
     
     @DATA
     """)
             else:
                 # Assume CSV format
                 print("ip,continent,country,city,crawled,version,out_degree,in_degree,mutual_neighbors,centrality,"
-                      "miner_probability")
+                      "miner_probability,avg_shortest_dist,expected_dist_to_miner")
             for node in tqdm(graph, desc="writing", unit=" nodes", leave=False):
                 loc = node.get_location()
                 if loc is None:
@@ -410,7 +456,9 @@ class ExportCommand(Command):
                 num_mutual_neighbors = sum(1 for neighbor in graph.neighbors(node) if graph.has_edge(neighbor, node))
                 print(f"{node.ip!s},{continent},{country},{city},{['TRUE', 'FALSE'][node.last_crawled() is None]},"
                       f"{version_str},{graph.out_degree[node]},{graph.in_degree[node]},{num_mutual_neighbors},"
-                      f"{weighted_page_rank[node]},{miner_probability[node]}")
+                      f"{weighted_page_rank[node]},{miner_probability[node]},"
+                      f"{sum(distances[weighted_graph.node_indexes[node]])/len(weighted_graph)},"
+                      f"{avg_dist_to_miner[node]}")
             t.update(1)
 
 
