@@ -588,7 +588,7 @@ class NodeRemoval(Command):
             distances_after = [modified_avg_dist_to_miner[n] for n in ordered_nodes if n not in nodes_to_remove]
             distances_change = kl_divergence(distances_before, distances_after)
 
-            tqdm.write(f"{country_to_remove}\t{centrality_change}\t{distances_change}", file=sys.stdout)
+            tqdm.write(f"{country_to_remove},{centrality_change},{distances_change}", file=sys.stdout)
 
 
 class Topology(Command):
