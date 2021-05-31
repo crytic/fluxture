@@ -42,12 +42,14 @@ class CrawlGraph(nx.DiGraph, Generic[N]):
             db: CrawlDatabase, only_crawled_nodes: bool = False, bidirectional_edges: bool = True
     ) -> "CrawlGraph[CrawledNode]":
         graph = CrawlGraph()
-        for node in tqdm(db.nodes, leave=False, desc="Constructing Topology", unit=" nodes"):
-            if only_crawled_nodes and node.last_crawled() is None and node.get_version() is None:
-                continue
+        if only_crawled_nodes:
+            nodes = set(db.crawled_nodes)
+        else:
+            nodes = db.nodes
+        for node in tqdm(nodes, leave=False, desc="Constructing Topology", unit=" nodes"):
             graph.add_node(node)
             for to_node in node.get_latest_edges():
-                if only_crawled_nodes and to_node.last_crawled() is None:
+                if only_crawled_nodes and to_node not in nodes:
                     continue
                 graph.add_edge(node, to_node)
                 if bidirectional_edges:
@@ -548,7 +550,7 @@ class NodeRemoval(Command):
                             help="path to the crawl database")
 
     def run(self, args):
-        graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE), only_crawled_nodes=True)
+        graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE), only_crawled_nodes=True, bidirectional_edges=False)
         ordered_nodes = list(graph)
         weighted_graph = ProbabilisticWeightedCrawlGraph(graph)
         weighted_page_rank = weighted_graph.pagerank()
@@ -562,13 +564,31 @@ class NodeRemoval(Command):
                     nodes_by_country[loc.country_code].add(node)
             else:
                 nodes_by_country["?"].add(node)
+        miner_probability = estimate_miner_probability(weighted_graph)
+        distances = weighted_graph.probabilistic_shortest_distances()
+        avg_dist_to_miner = expected_average_shortest_distance_to_miner(
+            crawl_graph=weighted_graph, distances=distances, miner_probability=miner_probability
+        )
+        tqdm.write("country,centrality change,distance to miner change", file=sys.stdout)
         for country_to_remove, nodes_to_remove in nodes_by_country.items():
+            # Calculate the change in centrality1
             centrality_before = [weighted_page_rank[n] for n in ordered_nodes if n not in nodes_to_remove]
             modified_graph = graph.filter(lambda n: n not in nodes_to_remove)
             modified_weighted_graph = ProbabilisticWeightedCrawlGraph(modified_graph)
             modified_weighted_page_rank = modified_weighted_graph.pagerank()
             centrality_after = [modified_weighted_page_rank[n] for n in ordered_nodes if n not in nodes_to_remove]
-            tqdm.write(f"{country_to_remove}\t{kl_divergence(centrality_before, centrality_after)}", file=sys.stdout)
+            centrality_change = kl_divergence(centrality_before, centrality_after)
+
+            # Calculate the change in distance to miners
+            distances_before = [avg_dist_to_miner[n] for n in ordered_nodes if n not in nodes_to_remove]
+            modified_distances = modified_weighted_graph.probabilistic_shortest_distances()
+            modified_avg_dist_to_miner = expected_average_shortest_distance_to_miner(
+                crawl_graph=modified_weighted_graph, distances=modified_distances, miner_probability=miner_probability
+            )
+            distances_after = [modified_avg_dist_to_miner[n] for n in ordered_nodes if n not in nodes_to_remove]
+            distances_change = kl_divergence(distances_before, distances_after)
+
+            tqdm.write(f"{country_to_remove}\t{centrality_change}\t{distances_change}", file=sys.stdout)
 
 
 class Topology(Command):

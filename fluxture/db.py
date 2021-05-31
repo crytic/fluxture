@@ -307,7 +307,7 @@ class DatabaseConnection:
 
 
 class Cursor(Generic[M]):
-    def __init__(self, table: "Table[M]", sql: str, params: Iterable[Union[str, int, float, bytes, Packable]]):
+    def __init__(self, table: "Table[M]", sql: str, params: Iterable[Union[str, int, float, bytes, Packable]] = ()):
         self.table: Table[M] = table
         self.sql: str = sql
         self.params: List[Union[str, int, float, bytes]] = []
