@@ -116,6 +116,37 @@ class CrawlGraph(nx.DiGraph, Generic[N]):
                 graph.add_edge(from_group, to_group)
         return graph
 
+    def filter(self, predicate: Callable[[N], bool]) -> "CrawlGraph[N]":
+        filtered: CrawlGraph[N] = CrawlGraph()
+        for node in self:
+            if predicate(node):
+                filtered.add_node(node)
+        for n1 in filtered.nodes:
+            for n2 in filtered.nodes:
+                if self.has_edge(n1, n2):
+                    filtered.add_edge(n1, n2)
+        return filtered
+
+
+class OutDegree(Generic[N]):
+    def __init__(self, graph: "ProbabilisticWeightedCrawlGraph[N]"):
+        self.graph: ProbabilisticWeightedCrawlGraph[N] = graph
+
+    def __getitem__(self, node: N) -> float:
+        if node not in self.graph.node_indexes:
+            return 0.0
+        return sum(self.graph.adjacency[self.graph.node_indexes[node], :])
+
+
+class InDegree(Generic[N]):
+    def __init__(self, graph: "ProbabilisticWeightedCrawlGraph[N]"):
+        self.graph: ProbabilisticWeightedCrawlGraph[N] = graph
+
+    def __getitem__(self, node: N) -> float:
+        if node not in self.graph.node_indexes:
+            return 0.0
+        return sum(self.graph.adjacency[:, self.graph.node_indexes[node]])
+
 
 class ProbabilisticWeightedCrawlGraph(Generic[N]):
     """
@@ -134,6 +165,8 @@ class ProbabilisticWeightedCrawlGraph(Generic[N]):
         """
         if 1.0 < max_neighbor_percent <= 0.0:
             raise ValueError("max_neighbor_percent must be in the range (0.0, 1.0]")
+        self.in_degree: InDegree[N] = InDegree(self)
+        self.out_degree: OutDegree[N] = OutDegree(self)
         self.nodes: List[N] = list(parent.nodes)
         self.node_indexes: Dict[N, int] = {node: i for i, node in enumerate(self.nodes)}
         self.expected_actual_degrees: Dict[N, float] = {}
@@ -377,13 +410,18 @@ class ExportCommand(Command):
                                                                                             "export the data")
 
     def run(self, args):
-        with tqdm(desc="exporting", leave=False, unit=" steps", total=7) as t:
+        with tqdm(desc="exporting", leave=False, unit=" steps", total=8, initial=1) as t:
             graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE), only_crawled_nodes=False,
                                     bidirectional_edges=False)
             t.update(1)
             weighted_graph = ProbabilisticWeightedCrawlGraph(graph)
             t.update(1)
             weighted_page_rank = weighted_graph.pagerank()
+            t.update(1)
+            weighted_crawled_graph = ProbabilisticWeightedCrawlGraph(
+                graph.filter(lambda n: n.last_crawled() is not None or n.get_version() is not None)
+            )
+            weighted_crawled_graph_rank = weighted_crawled_graph.pagerank()
             t.update(1)
 
             miner_probability = estimate_miner_probability(weighted_graph)
@@ -430,13 +468,17 @@ class ExportCommand(Command):
     @ATTRIBUTE miner_probability      NUMERIC
     @ATTRIBUTE avg_shortest_dist      NUMERIC
     @ATTRIBUTE expected_dist_to_miner NUMERIC
+    @ATTRIBUTE crawled_out_degree     NUMERIC
+    @ATTRIBUTE crawled_in_degree      NUMERIC
+    @ATTRIBUTE crawled_centrality     NUMERIC
     
     @DATA
     """)
             else:
                 # Assume CSV format
                 print("ip,continent,country,city,crawled,version,out_degree,in_degree,mutual_neighbors,centrality,"
-                      "miner_probability,avg_shortest_dist,expected_dist_to_miner")
+                      "miner_probability,avg_shortest_dist,expected_dist_to_miner,crawled_out_degree,"
+                      "crawled_in_degree,crawled_centrality")
             for node in tqdm(graph, desc="writing", unit=" nodes", leave=False):
                 loc = node.get_location()
                 if loc is None:
@@ -467,12 +509,17 @@ class ExportCommand(Command):
                     version_str = version.version
                     if args.format == "arff":
                         version_str = repr(version_str)
+                if node in weighted_crawled_graph_rank:
+                    weighted_rank = str(weighted_crawled_graph_rank[node])
+                else:
+                    weighted_rank = ""
                 num_mutual_neighbors = sum(1 for neighbor in graph.neighbors(node) if graph.has_edge(neighbor, node))
                 print(f"{node.ip!s},{continent},{country},{city},{['TRUE', 'FALSE'][node.last_crawled() is None]},"
                       f"{version_str},{graph.out_degree[node]},{graph.in_degree[node]},{num_mutual_neighbors},"
                       f"{weighted_page_rank[node]},{miner_probability[node]},"
                       f"{sum(distances[weighted_graph.node_indexes[node]])/len(weighted_graph)},"
-                      f"{avg_dist_to_miner[node]}")
+                      f"{avg_dist_to_miner[node]},{weighted_crawled_graph.out_degree[node]},"
+                      f"{weighted_crawled_graph.in_degree[node]},{weighted_rank}")
             t.update(1)
 
 
