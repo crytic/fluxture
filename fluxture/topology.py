@@ -43,7 +43,7 @@ class CrawlGraph(nx.DiGraph, Generic[N]):
     ) -> "CrawlGraph[CrawledNode]":
         graph = CrawlGraph()
         for node in tqdm(db.nodes, leave=False, desc="Constructing Topology", unit=" nodes"):
-            if only_crawled_nodes and node.last_crawled() is None:
+            if only_crawled_nodes and node.last_crawled() is None and node.get_version() is None:
                 continue
             graph.add_node(node)
             for to_node in node.get_latest_edges():
@@ -521,6 +521,54 @@ class ExportCommand(Command):
                       f"{avg_dist_to_miner[node]},{weighted_crawled_graph.out_degree[node]},"
                       f"{weighted_crawled_graph.in_degree[node]},{weighted_rank}")
             t.update(1)
+
+
+def kl_divergence(dist1: Iterable[float], dist2: Iterable[float]) -> float:
+    """Calculates the Kullback-Liebler divergence of two distributions"""
+    values1 = np.asarray(dist1, dtype=np.float)
+    values2 = np.asarray(dist2, dtype=np.float)
+
+    if values1.shape != values2.shape:
+        raise ValueError("The distrubitons must have the same number of values!")
+
+    # make sure the values sum to 1.0:
+    values1 /= values1.sum(0)
+    values2 /= values2.sum(0)
+
+    return np.sum(np.where(values1 != 0, values1 * np.log(values1 / values2), 0))  # type: ignore
+
+
+class NodeRemoval(Command):
+    name = "removal"
+    help = "tests the hypothetical effect on the remaining nodes' consensus if different subgroups of the network " \
+           "were removed from the network"
+
+    def __init_arguments__(self, parser: ArgumentParser):
+        parser.add_argument("CRAWL_DB_FILE", type=str,
+                            help="path to the crawl database")
+
+    def run(self, args):
+        graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE), only_crawled_nodes=True)
+        ordered_nodes = list(graph)
+        weighted_graph = ProbabilisticWeightedCrawlGraph(graph)
+        weighted_page_rank = weighted_graph.pagerank()
+        nodes_by_country: Dict[str, Set[CrawledNode]] = defaultdict(set)
+        for node in graph:
+            loc = node.get_location()
+            if loc is not None:
+                if loc.country_code is None:
+                    nodes_by_country["?"].add(node)
+                else:
+                    nodes_by_country[loc.country_code].add(node)
+            else:
+                nodes_by_country["?"].add(node)
+        for country_to_remove, nodes_to_remove in nodes_by_country.items():
+            centrality_before = [weighted_page_rank[n] for n in ordered_nodes if n not in nodes_to_remove]
+            modified_graph = graph.filter(lambda n: n not in nodes_to_remove)
+            modified_weighted_graph = ProbabilisticWeightedCrawlGraph(modified_graph)
+            modified_weighted_page_rank = modified_weighted_graph.pagerank()
+            centrality_after = [modified_weighted_page_rank[n] for n in ordered_nodes if n not in nodes_to_remove]
+            tqdm.write(f"{country_to_remove}\t{kl_divergence(centrality_before, centrality_after)}", file=sys.stdout)
 
 
 class Topology(Command):
