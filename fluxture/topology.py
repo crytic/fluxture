@@ -540,6 +540,28 @@ def kl_divergence(dist1: Iterable[float], dist2: Iterable[float]) -> float:
     return np.sum(np.where(values1 != 0, values1 * np.log(values1 / values2), 0))  # type: ignore
 
 
+class UnreachableNodes(Command):
+    name = "unreachable"
+    help = "reports statistics on nodes that were reported as neighbors by nodes we crawled but were unreachable"
+
+    def __init_arguments__(self, parser: ArgumentParser):
+        parser.add_argument("CRAWL_DB_FILE", type=str,
+                            help="path to the crawl database")
+
+    def run(self, args):
+        with CrawlDatabase(args.CRAWL_DB_FILE) as db:
+            num_nodes = len(db.nodes)
+            crawled_nodes = set(db.crawled_nodes)
+            print(f"% crawled:\t{len(crawled_nodes)/num_nodes}")
+            num_out_edges = 0
+            num_crawled_out_edges = 0
+            for node in crawled_nodes:
+                neighbors = node.get_latest_edges()
+                num_out_edges += len(neighbors)
+                num_crawled_out_edges += sum(1 for neighbor in neighbors if neighbor in crawled_nodes)
+            print(f"% unreachable:\t{num_crawled_out_edges/num_out_edges}")
+
+
 class NodeRemoval(Command):
     name = "removal"
     help = "tests the hypothetical effect on the remaining nodes' consensus if different subgroups of the network " \
