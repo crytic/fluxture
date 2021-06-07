@@ -31,8 +31,8 @@ class TestTypes(TestCase):
         self.assertEqual(EnumTest.BAR, 10)
         self.assertIsInstance(EnumTest.FOO, EnumTest)
         self.assertIsInstance(EnumTest.BAR, EnumTest)
-        self.assertEqual(EnumTest["FOO"], EnumTest.FOO)
-        self.assertEqual(EnumTest["BAR"], EnumTest.BAR)
+        self.assertEqual(EnumTest.get("FOO"), EnumTest.FOO)
+        self.assertEqual(EnumTest.get("BAR"), EnumTest.BAR)
         self.assertIs(EnumTest.get_type(), UInt8)
         self.assertEqual(EnumTest.DEFAULT, EnumTest.FOO)
 
@@ -47,6 +47,19 @@ class TestTypes(TestCase):
             BAR = 35000
 
         self.assertIs(LargeEnum.get_type(), Int32)
+
+    def test_int_flags(self):
+        class Flags(IntFlag):
+            A = 0
+            B = 1
+            C = 2
+            D = 4
+
+        self.assertEqual(Flags.A, 0)
+        self.assertEqual(Flags.B, 1)
+        self.assertEqual(Flags.C, 2)
+        self.assertEqual(Flags.D, 4)
+        self.assertEqual(Flags.B | Flags.C, 3)
 
     def test_bad_int_enum(self):
         def make_bad_enum():
