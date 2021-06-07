@@ -12,7 +12,7 @@ from geoip2.errors import AddressNotFoundError
 from tqdm import tqdm
 
 from .blockchain import Blockchain, BLOCKCHAINS, Miner, Node
-from .crawl_schema import Crawl, CrawlDatabase, DatabaseCrawl, DateTime, N
+from .crawl_schema import Crawl, CrawlDatabase, CrawlState, DatabaseCrawl, DateTime, N
 from .fluxture import Command
 from .geolocation import download_maxmind_db, GeoIP2Error, GeoIP2Locator, Geolocator
 
@@ -72,10 +72,16 @@ class Crawler(Generic[N], metaclass=ABCMeta):
 
     async def _crawl_node(self, node: N) -> FrozenSet[N]:
         if self.geolocator is not None:
-            self.crawl.set_location(node.address, self.geolocator.locate(node.address))
+            try:
+                self.crawl.set_location(node.address, self.geolocator.locate(node.address))
+                self.crawl.add_state(node, CrawlState.GEOLOCATED)
+            except AddressNotFoundError:
+                pass
         async with node:
+            self.crawl.add_state(node, CrawlState.CONNECTED)
             neighbors = []
             new_neighbors = set()
+            self.crawl.add_state(node, CrawlState.REQUESTED_NEIGHBORS)
             for neighbor in await self.blockchain.get_neighbors(node):
                 if neighbor in self.nodes:
                     neighbors.append(self.nodes[neighbor])
@@ -84,8 +90,10 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                     neighbors.append(neighbor)
                     new_neighbors.add(neighbor)
             self.crawl.set_neighbors(node, frozenset(neighbors))
+            self.crawl.add_state(node, CrawlState.REQUESTED_VERSION)
             version = await self.blockchain.get_version(node)
             if version is not None:
+                self.crawl.add_state(node, CrawlState.GOT_VERSION)
                 crawled_node = self.crawl.get_node(node)
                 self.crawl.add_event(crawled_node, event="version", description=version.version,
                                      timestamp=DateTime(version.timestamp))

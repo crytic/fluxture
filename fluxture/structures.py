@@ -5,7 +5,7 @@ from collections import OrderedDict
 from typing import Generic, Iterator, KeysView, Type, TypeVar, Tuple, ValuesView as ValuesViewType, ValuesView, \
     OrderedDict as OrderedDictType
 
-from fluxture.serialization import ByteOrder, FixedSize, IntEnum, P, Packable, UnpackError
+from fluxture.serialization import AbstractIntEnum, ByteOrder, FixedSize, P, Packable, UnpackError
 
 
 F = TypeVar("F")
@@ -62,7 +62,7 @@ class Struct(Generic[F], metaclass=StructMeta[F]):
                 field_type = self.__class__.FIELDS[name]
                 if hasattr(field_type, "column_options") and field_type.column_options.default is not None:
                     kwargs[name] = field_type.column_options.default
-                elif issubclass(field_type, IntEnum):
+                elif issubclass(field_type, AbstractIntEnum):
                     kwargs[name] = field_type.DEFAULT
                 else:
                     raise ValueError(f"Missing argument for {name} in {self.__class__}")

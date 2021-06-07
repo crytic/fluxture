@@ -5,7 +5,7 @@ from typing import Callable, FrozenSet, Generic, Optional, Set, Sized, TypeVar, 
 from .blockchain import Miner, Node, Version
 from .db import Cursor, Database, ForeignKey, Model, Table
 from .geolocation import Geolocation
-from .serialization import DateTime, IPv6Address
+from .serialization import DateTime, IntFlag, IPv6Address
 
 
 N = TypeVar("N", bound=Node)
@@ -21,10 +21,23 @@ class HostInfo(Model):
         return hash(self.ip)
 
 
+class CrawlState(IntFlag):
+    DISCOVERED = 1
+    GEOLOCATED = 2
+    ATTEMPTED_CONNECTION = DISCOVERED | 4
+    CONNECTED = ATTEMPTED_CONNECTION | 8
+    REQUESTED_NEIGHBORS = CONNECTED | 16
+    GOT_NEIGHBORS = REQUESTED_NEIGHBORS | 32
+    REQUESTED_VERSION = CONNECTED | 64
+    GOT_VERSION = REQUESTED_VERSION | 128
+    UNKNOWN = 0
+
+
 class CrawledNode(Model["CrawlDatabase"]):
     ip: IPv6Address
     port: int
     is_miner: Miner
+    state: CrawlState
 
     def __hash__(self):
         return hash((self.ip, self.port))
@@ -136,6 +149,10 @@ class Crawl(Generic[N], Sized):
     def set_host_info(self, host_info: HostInfo):
         raise NotImplementedError()
 
+    @abstractmethod
+    def add_state(self, node: N, state: CrawlState):
+        raise NotImplementedError()
+
 
 class DatabaseCrawl(Generic[N], Crawl[N]):
     def __init__(
@@ -194,6 +211,7 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
                 )
                 for neighbor in neighbors
             ])
+            self.add_state(node, CrawlState.GOT_NEIGHBORS)
 
     def set_location(self, ip: IPv6Address, location: Geolocation):
         self.db.locations.append(location)
@@ -205,6 +223,11 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
 
     def set_host_info(self, host_info: HostInfo):
         self.db.hosts.append(host_info)
+
+    def add_state(self, node: N, state: CrawlState):
+        crawled_node = self.get_node(node)
+        crawled_node.state = crawled_node.state | state
+        self.db.nodes.update(crawled_node)
 
     def __len__(self) -> int:
         return len(self.db.nodes)
