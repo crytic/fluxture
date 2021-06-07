@@ -178,8 +178,7 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                 )
 
         for miner in await self.blockchain.get_miners():
-            if miner not in self.crawl:
-                self.crawl.set_miner(miner, Miner.MINER)
+            self.crawl.set_miner(miner, Miner.MINER)
 
         for node in self.nodes.values():
             if node.is_running:

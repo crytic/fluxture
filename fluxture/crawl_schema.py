@@ -185,14 +185,15 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
         return ret
 
     def add_event(self, node: CrawledNode, event: str, description: str, timestamp: Optional[DateTime] = None):
-        if timestamp is None:
-            timestamp = DateTime()
-        self.db.events.append(CrawlEvent(
-            node=node.rowid,
-            event=event,
-            description=description,
-            timestamp=timestamp
-        ))
+        with self.db:
+            if timestamp is None:
+                timestamp = DateTime()
+            self.db.events.append(CrawlEvent(
+                node=node.rowid,
+                event=event,
+                description=description,
+                timestamp=timestamp
+            ))
 
     def get_neighbors(self, node: N) -> FrozenSet[N]:
         return frozenset({
@@ -200,9 +201,9 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
         })
 
     def set_neighbors(self, node: N, neighbors: FrozenSet[N]):
-        crawled_node = self.get_node(node)
-        timestamp = DateTime()
         with self.db:
+            crawled_node = self.get_node(node)
+            timestamp = DateTime()
             self.db.edges.extend([
                 Edge(
                     from_node=crawled_node,
@@ -214,20 +215,24 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
             self.add_state(node, CrawlState.GOT_NEIGHBORS)
 
     def set_location(self, ip: IPv6Address, location: Geolocation):
-        self.db.locations.append(location)
+        with self.db:
+            self.db.locations.append(location)
 
     def set_miner(self, node: N, miner: Miner):
-        crawled_node = self.get_node(node)
-        crawled_node.is_miner = miner
-        self.db.nodes.update(crawled_node)
+        with self.db:
+            crawled_node = self.get_node(node)
+            crawled_node.is_miner = miner
+            self.db.nodes.update(crawled_node)
 
     def set_host_info(self, host_info: HostInfo):
-        self.db.hosts.append(host_info)
+        with self.db:
+            self.db.hosts.append(host_info)
 
     def add_state(self, node: N, state: CrawlState):
-        crawled_node = self.get_node(node)
-        crawled_node.state = crawled_node.state | state
-        self.db.nodes.update(crawled_node)
+        with self.db:
+            crawled_node = self.get_node(node)
+            crawled_node.state = crawled_node.state | state
+            self.db.nodes.update(crawled_node)
 
     def __len__(self) -> int:
         return len(self.db.nodes)
