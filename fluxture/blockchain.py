@@ -84,7 +84,11 @@ class Node(metaclass=ABCMeta):
     async def close(self):
         if self._writer is not None:
             self._writer.close()
-            await self._writer.wait_closed()
+            try:
+                await self._writer.wait_closed()
+            except BrokenPipeError:
+                # this is expected
+                pass
             self._reader = None
             self._writer = None
             if not self._stop.is_set():
