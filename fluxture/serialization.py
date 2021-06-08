@@ -8,7 +8,7 @@ from collections import OrderedDict
 from enum import Enum as PythonEnum
 from inspect import isabstract
 from typing import (
-    Generic, Iterator, Optional, OrderedDict as OrderedDictType, Tuple, Type, TypeVar, Union
+    Dict, Generic, Iterator, OrderedDict as OrderedDictType, Tuple, Type, TypeVar, Union
 )
 from typing_extensions import Protocol, runtime_checkable
 
