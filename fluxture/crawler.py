@@ -1,5 +1,5 @@
 import asyncio
-import subprocess
+import resource
 import sys
 import traceback
 from abc import ABCMeta
@@ -69,7 +69,7 @@ class Crawler(Generic[N], metaclass=ABCMeta):
         self.geolocator: Optional[Geolocator] = geolocator
         self.nodes: Dict[N, N] = {}
         if max_connections is None:
-            max_connections = int(subprocess.check_output(["ulimit", "-n"])) // 3 * 2
+            max_connections = resource.getrlimit(resource.RLIMIT_NOFILE)[0] // 3 * 2
         max_connections = max(max_connections, 1)
         self.max_connections: int = max_connections
         self.listener_tasks: List[Future] = []
@@ -324,6 +324,11 @@ class CrawlCommand(Command):
     def __init_arguments__(self, parser: ArgumentParser):
         parser.add_argument("--database", "-db", type=str, default=":memory:",
                             help="path to the crawl database (default is to run in memory)")
+        max_file_descriptors, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+        parser.add_argument("--max-connections", "-m", type=int, default=None,
+                            help="the maximum number of connections to open at once during the crawl, capped at "
+                                 f"⅔ of `ulimit -n` = {max(max_file_descriptors // 3 * 2, 1)} (default is to use the "
+                                 "maximum possible)")
         parser.add_argument("BLOCKCHAIN_NAME", type=str, help="the name of the blockchain to crawl",
                             choices=BLOCKCHAINS.keys())
 
@@ -340,12 +345,30 @@ class CrawlCommand(Command):
 
         blockchain_type = BLOCKCHAINS[args.BLOCKCHAIN_NAME]
 
+        if args.max_connections is None:
+            max_file_handles, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+            if sys.stderr.isatty() and sys.stdin.isatty():
+                if max_file_handles < 1024:
+                    while True:
+                        sys.stderr.write(f"`uname -n` is {max_file_handles}, which is low and will cause the crawl to "
+                                         "be very slow.\nWould you like to increase this value to 32768? [Yn] ")
+                        choice = input("")
+                        if choice.lower() == "y" or len(choice.strip()) == 0:
+                            resource.setrlimit(resource.RLIMIT_NOFILE, (32768, resource.RLIM_INFINITY))
+                            max_file_handles, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+                        elif choice.lower() == "n":
+                            break
+            max_connections = max(max_file_handles // 3 * 2, 1)
+        else:
+            max_connections = args.max_connections
+
         def crawl():
             with CrawlDatabase(args.database) as db:
                 Crawler(
                     blockchain=blockchain_type(),
                     crawl=DatabaseCrawl(blockchain_type.node_type, db),
-                    geolocator=geo
+                    geolocator=geo,
+                    max_connections=max_connections
                 ).do_crawl()
 
         if geo is None:
