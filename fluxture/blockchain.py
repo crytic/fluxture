@@ -71,7 +71,11 @@ class Node(metaclass=ABCMeta):
 
     async def connect(self):
         if self._reader is None:
-            self._reader, self._writer = await asyncio.open_connection(str(self.address), self.port)
+            self._reader, self._writer = await asyncio.open_connection(
+                str(self.address),
+                self.port,
+                happy_eyeballs_delay=0.25  # this causes IPv4 and IPv6 attempts to be interleaved
+            )
             if self._stop is None:
                 self._stop = asyncio.Event()
             elif self._stop.is_set():
