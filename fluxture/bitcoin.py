@@ -1,5 +1,6 @@
 import asyncio
 import socket
+import sys
 from abc import ABC
 from hashlib import sha256
 from ipaddress import IPv4Address, IPv6Address
@@ -429,17 +430,26 @@ class BitcoinNode(Node):
                     await gather
                 except asyncio.CancelledError:
                     pass
-                message = done.pop().result()
-                if message is None:
-                    break
-                elif self.is_running:
-                    # print(f"{self.address}:{self.port} {message}")
-                    if isinstance(message, VersionMessage):
-                        self.version = message
-                        await self.send_message(VerackMessage())
-                    elif isinstance(message, Ping):
-                        await self.send_message(Pong(nonce=message.nonce))
+                got_message = False
+                for result in done:
+                    try:
+                        message = result.result()
+                    except (NotImplementedError, ValueError, UnpackError) as e:
+                        sys.stderr.write(f"Warning: {e!s}")
+                        continue
+                    if not isinstance(message, BitcoinMessage):
+                        continue
+                    got_message = True
+                    if self.is_running:
+                        # print(f"{self.address}:{self.port} {message}")
+                        if isinstance(message, VersionMessage):
+                            self.version = message
+                            await self.send_message(VerackMessage())
+                        elif isinstance(message, Ping):
+                            await self.send_message(Pong(nonce=message.nonce))
                     yield message
+                if not got_message:
+                    break
 
 
 async def collect_addresses(url: str, port: int = 8333) -> Tuple[BitcoinNode, ...]:
