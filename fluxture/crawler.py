@@ -1,4 +1,5 @@
 import asyncio
+import subprocess
 import sys
 import traceback
 from abc import ABCMeta
@@ -61,12 +62,15 @@ class Crawler(Generic[N], metaclass=ABCMeta):
             blockchain: Blockchain[N],
             crawl: Crawl[N],
             geolocator: Optional[Geolocator] = None,
-            max_connections: int = 1024
+            max_connections: Optional[int] = None
     ):
         self.blockchain: Blockchain[N] = blockchain
         self.crawl: Crawl[N] = crawl
         self.geolocator: Optional[Geolocator] = geolocator
         self.nodes: Dict[N, N] = {}
+        if max_connections is None:
+            max_connections = int(subprocess.check_output(["ulimit", "-n"])) // 3 * 2
+        max_connections = max(max_connections, 1)
         self.max_connections: int = max_connections
         self.listener_tasks: List[Future] = []
 
@@ -78,27 +82,30 @@ class Crawler(Generic[N], metaclass=ABCMeta):
             except AddressNotFoundError:
                 pass
         self.crawl.add_state(node, CrawlState.ATTEMPTED_CONNECTION)
-        async with node:
-            self.crawl.add_state(node, CrawlState.CONNECTED)
-            neighbors = []
-            new_neighbors = set()
-            self.crawl.add_state(node, CrawlState.REQUESTED_NEIGHBORS)
-            for neighbor in await self.blockchain.get_neighbors(node):
-                if neighbor in self.nodes:
-                    neighbors.append(self.nodes[neighbor])
-                else:
-                    self.nodes[neighbor] = neighbor
-                    neighbors.append(neighbor)
-                    new_neighbors.add(neighbor)
-            self.crawl.set_neighbors(node, frozenset(neighbors))
-            self.crawl.add_state(node, CrawlState.GOT_NEIGHBORS | CrawlState.REQUESTED_VERSION)
-            version = await self.blockchain.get_version(node)
-            if version is not None:
-                self.crawl.add_state(node, CrawlState.GOT_VERSION)
-                crawled_node = self.crawl.get_node(node)
-                self.crawl.add_event(crawled_node, event="version", description=version.version,
-                                     timestamp=DateTime(version.timestamp))
-            return frozenset(new_neighbors)
+        try:
+            async with node:
+                self.crawl.add_state(node, CrawlState.CONNECTED)
+                neighbors = []
+                new_neighbors = set()
+                self.crawl.add_state(node, CrawlState.REQUESTED_NEIGHBORS)
+                for neighbor in await self.blockchain.get_neighbors(node):
+                    if neighbor in self.nodes:
+                        neighbors.append(self.nodes[neighbor])
+                    else:
+                        self.nodes[neighbor] = neighbor
+                        neighbors.append(neighbor)
+                        new_neighbors.add(neighbor)
+                self.crawl.set_neighbors(node, frozenset(neighbors))
+                self.crawl.add_state(node, CrawlState.GOT_NEIGHBORS | CrawlState.REQUESTED_VERSION)
+                version = await self.blockchain.get_version(node)
+                if version is not None:
+                    self.crawl.add_state(node, CrawlState.GOT_VERSION)
+                    crawled_node = self.crawl.get_node(node)
+                    self.crawl.add_event(crawled_node, event="version", description=version.version,
+                                         timestamp=DateTime(version.timestamp))
+                return frozenset(new_neighbors)
+        finally:
+            await node.close()
 
     def add_tasks(self, *tasks: Union[Future, Coroutine[Any, Any, None]]):
         for task in tasks:

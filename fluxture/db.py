@@ -569,7 +569,7 @@ class Database(metaclass=StructMeta[Model]):
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         # self.con.__exit__(exc_type, exc_val, exc_tb)
-        pass
+        self.con.commit()
 
     def create_table(self, table_name: str, table_type: Type[Table[M]]) -> Table[M]:
         columns = []
