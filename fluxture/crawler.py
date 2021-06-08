@@ -1,4 +1,5 @@
 import asyncio
+import errno
 import resource
 import sys
 import traceback
@@ -104,6 +105,17 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                     self.crawl.add_event(crawled_node, event="version", description=version.version,
                                          timestamp=DateTime(version.timestamp))
                 return frozenset(new_neighbors)
+        except BrokenPipeError:
+            self.crawl.add_state(node, CrawlState.CONNECTION_RESET)
+            raise
+        except OSError as e:
+            if e.errno in (errno.ETIMEDOUT, errno.ECONNREFUSED, errno.EHOSTDOWN, errno.EHOSTUNREACH):
+                # Connection failed
+                self.crawl.add_state(node, CrawlState.CONNECTION_FAILED)
+            else:
+                # Something happened after we connected (e.g., connection reset by peer)
+                self.crawl.add_state(node, CrawlState.CONNECTION_RESET)
+            raise
         finally:
             await node.close()
 
