@@ -9,7 +9,7 @@ from typing import AsyncIterator, Dict, FrozenSet, Generic, KeysView, List, Opti
 
 import fluxture.structures
 
-from .blockchain import Blockchain, get_public_ip, Miner, Node, Version
+from .blockchain import Blockchain, BlockchainError, get_public_ip, Miner, Node, Version
 from .messaging import BinaryMessage
 from .serialization import ByteOrder, P, UnpackError
 from .shodan import get_api, SearchQuery, ShodanResult
@@ -27,7 +27,7 @@ MINER_QUERY = SearchQuery.register(name="BitcoinMiner", query="antminer")
 B = TypeVar('B', bound="BitcoinMessage")
 
 
-class BitcoinError(RuntimeError):
+class BitcoinError(BlockchainError):
     pass
 
 

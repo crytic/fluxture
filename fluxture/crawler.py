@@ -11,7 +11,7 @@ from typing import Any, AsyncIterator, Coroutine, Deque, Dict, FrozenSet, Generi
 from geoip2.errors import AddressNotFoundError
 from tqdm import tqdm
 
-from .blockchain import Blockchain, BLOCKCHAINS, Miner, Node
+from .blockchain import Blockchain, BLOCKCHAINS, BlockchainError, Miner, Node
 from .crawl_schema import Crawl, CrawlDatabase, CrawlState, DatabaseCrawl, DateTime, N
 from .fluxture import Command
 from .geolocation import download_maxmind_db, GeoIP2Error, GeoIP2Locator, Geolocator
@@ -77,6 +77,7 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                 self.crawl.add_state(node, CrawlState.GEOLOCATED)
             except AddressNotFoundError:
                 pass
+        self.crawl.add_state(node, CrawlState.ATTEMPTED_CONNECTION)
         async with node:
             self.crawl.add_state(node, CrawlState.CONNECTED)
             neighbors = []
@@ -90,7 +91,7 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                     neighbors.append(neighbor)
                     new_neighbors.add(neighbor)
             self.crawl.set_neighbors(node, frozenset(neighbors))
-            self.crawl.add_state(node, CrawlState.REQUESTED_VERSION)
+            self.crawl.add_state(node, CrawlState.GOT_NEIGHBORS | CrawlState.REQUESTED_VERSION)
             version = await self.blockchain.get_version(node)
             if version is not None:
                 self.crawl.add_state(node, CrawlState.GOT_VERSION)
@@ -137,7 +138,7 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                     elif isinstance(result, Exception):
                         # TODO: Save the exception to the database
                         # self.crawl.add_event(node, event="Exception", description=str(result))
-                        if isinstance(result, (ConnectionError, OSError, BrokenPipeError)):
+                        if isinstance(result, (ConnectionError, OSError, BrokenPipeError, BlockchainError)):
                             print(str(result))
                         else:
                             traceback.print_tb(result.__traceback__)

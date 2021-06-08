@@ -213,6 +213,10 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
                 for neighbor in neighbors
             ])
             self.add_state(node, CrawlState.GOT_NEIGHBORS)
+            for neighbor in neighbors:
+                # Make sure we record that we discovered the neighbor
+                _ = self.get_node(neighbor)
+                # (simply getting the node for the neighbor will ensure that its state's "discovered" flag is set)
 
     def set_location(self, ip: IPv6Address, location: Geolocation):
         with self.db:

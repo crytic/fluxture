@@ -8,6 +8,10 @@ from .messaging import Message
 from . import serialization
 
 
+class BlockchainError(RuntimeError):
+    pass
+
+
 class Miner(serialization.IntEnum):
     UNKNOWN = 0
     MINER = 1
