@@ -76,19 +76,22 @@ class Crawler(Generic[N], metaclass=ABCMeta):
         self.listener_tasks: List[Future] = []
 
     async def _crawl_node(self, node: N) -> FrozenSet[N]:
-        if self.geolocator is not None:
+        crawled_node = self.crawl.get_node(node)
+        if self.geolocator is not None and crawled_node.state & CrawlState.GEOLOCATED != CrawlState.GEOLOCATED:
             try:
                 self.crawl.set_location(node.address, self.geolocator.locate(node.address))
-                self.crawl.add_state(node, CrawlState.GEOLOCATED)
+                self.crawl.add_state(crawled_node, CrawlState.GEOLOCATED)
             except AddressNotFoundError:
                 pass
-        self.crawl.add_state(node, CrawlState.ATTEMPTED_CONNECTION)
+        if crawled_node.state & CrawlState.ATTEMPTED_CONNECTION == CrawlState.ATTEMPTED_CONNECTION:
+            raise ValueError(f"Node {node} was already crawled!")
+        self.crawl.add_state(crawled_node, CrawlState.ATTEMPTED_CONNECTION)
         try:
             async with node:
-                self.crawl.add_state(node, CrawlState.CONNECTED)
+                self.crawl.add_state(crawled_node, CrawlState.CONNECTED)
                 neighbors = []
                 new_neighbors = set()
-                self.crawl.add_state(node, CrawlState.REQUESTED_NEIGHBORS)
+                self.crawl.add_state(crawled_node, CrawlState.REQUESTED_NEIGHBORS)
                 for neighbor in await self.blockchain.get_neighbors(node):
                     if neighbor in self.nodes:
                         # we have already seen this node
@@ -98,24 +101,24 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                         neighbors.append(neighbor)
                         new_neighbors.add(neighbor)
                 self.crawl.set_neighbors(node, frozenset(neighbors))
-                self.crawl.add_state(node, CrawlState.GOT_NEIGHBORS | CrawlState.REQUESTED_VERSION)
+                self.crawl.add_state(crawled_node, CrawlState.GOT_NEIGHBORS | CrawlState.REQUESTED_VERSION)
                 version = await self.blockchain.get_version(node)
                 if version is not None:
-                    self.crawl.add_state(node, CrawlState.GOT_VERSION)
+                    self.crawl.add_state(crawled_node, CrawlState.GOT_VERSION)
                     crawled_node = self.crawl.get_node(node)
                     self.crawl.add_event(crawled_node, event="version", description=version.version,
                                          timestamp=DateTime(version.timestamp))
                 return frozenset(new_neighbors)
         except BrokenPipeError:
-            self.crawl.add_state(node, CrawlState.CONNECTION_RESET)
+            self.crawl.add_state(crawled_node, CrawlState.CONNECTION_RESET)
             raise
         except OSError as e:
             if e.errno in (errno.ETIMEDOUT, errno.ECONNREFUSED, errno.EHOSTDOWN, errno.EHOSTUNREACH):
                 # Connection failed
-                self.crawl.add_state(node, CrawlState.CONNECTION_FAILED)
+                self.crawl.add_state(crawled_node, CrawlState.CONNECTION_FAILED)
             else:
                 # Something happened after we connected (e.g., connection reset by peer)
-                self.crawl.add_state(node, CrawlState.CONNECTION_RESET)
+                self.crawl.add_state(crawled_node, CrawlState.CONNECTION_RESET)
             raise
         finally:
             await node.close()

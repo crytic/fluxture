@@ -108,10 +108,8 @@ class CrawlDatabase(Database):
     def crawled_nodes(self) -> Cursor[CrawledNode]:
         return Cursor(
             self.nodes,
-            f"SELECT DISTINCT n.*, n.rowid FROM {self.nodes.name} n "
-            f"LEFT JOIN {self.edges.name} e ON e.from_node = n.rowid "
-            f"LEFT JOIN {self.events.name} t ON t.node = n.rowid "
-            f"WHERE e.timestamp IS NOT NULL OR t.event = \"version\""
+            f"SELECT DISTINCT n.*, n.rowid FROM {self.nodes.name} n WHERE n.state >= ?",
+            (CrawlState.CONNECTED,)
         )
 
 

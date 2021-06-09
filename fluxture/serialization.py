@@ -245,9 +245,17 @@ class IntFlag(AbstractIntEnum["IntFlag"]):
         if self.name is not None:
             yield self.name
         else:
+            yielded = False
+            zero_value = ""
+            int_value = int(self)
             for member_name, value in self.__class__.__members__.items():
-                if bool(value & int(self)):
+                if int(value) & int_value == int(value):
                     yield member_name
+                    yielded = True
+                elif value == 0:
+                    zero_value = member_name
+            if not yielded and zero_value:
+                yield zero_value
 
     def __str__(self):
         return f"{self.__class__.__name__}.{'|'.join(self.names)}"
