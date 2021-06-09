@@ -163,6 +163,14 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                             traceback.print_tb(result.__traceback__)
                             print(result)
                     elif seed_iter is not None and isinstance(result, Node):
+                        # This is a seed
+                        crawled_node = self.crawl.get_node(result)
+                        if crawled_node.source != result.source:
+                            # this means we already organically encountered this node from another peer
+                            # so update its source to be the seed
+                            crawled_node.source = result.source
+                            self.crawl.update_node(crawled_node)
+                        # Check if we have already encountered this node
                         queue.append(result)
                         num_seeds += 1
                         futures.append(ensure_future(seed_iter.__anext__()))

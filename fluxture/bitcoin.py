@@ -364,8 +364,8 @@ class AddrMessage(BitcoinMessage):
 
 
 class BitcoinNode(Node):
-    def __init__(self, address: Union[str, IPv4Address, IPv6Address], port: int = 8333):
-        super().__init__(address, port)
+    def __init__(self, address: Union[str, IPv4Address, IPv6Address], port: int = 8333, source: str = "peer"):
+        super().__init__(address, port, source)
         self.connected: bool = False
         self.connecting: bool = False
         self.version: Optional[VersionMessage] = None
@@ -454,7 +454,7 @@ class BitcoinNode(Node):
 
 async def collect_addresses(url: str, port: int = 8333) -> Tuple[BitcoinNode, ...]:
     return tuple(
-        BitcoinNode(addr[4][0])
+        BitcoinNode(addr[4][0], source="seed")
         for addr in await asyncio.get_running_loop().getaddrinfo(url, port, proto=socket.IPPROTO_TCP)
     )
 
@@ -466,7 +466,7 @@ async def collect_defaults(
     if use_shodan:
         async for shodan_result in NODE_QUERY.run_async(get_api()):
             if shodan_result.ip not in yielded:
-                yield BitcoinNode(shodan_result.ip)
+                yield BitcoinNode(shodan_result.ip, source="shodan")
                 yielded.add(shodan_result.ip)
         log.info(f"Got {len(yielded)} seed nodes from Shodan")
     yielded_before = len(yielded)

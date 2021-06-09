@@ -40,6 +40,7 @@ class CrawledNode(Model["CrawlDatabase"]):
     port: int
     is_miner: Miner
     state: CrawlState
+    source: str
 
     def __hash__(self):
         return hash((self.ip, self.port))
@@ -155,6 +156,10 @@ class Crawl(Generic[N], Sized):
     def add_state(self, node: N, state: CrawlState):
         raise NotImplementedError()
 
+    @abstractmethod
+    def update_node(self, node: CrawledNode):
+        raise NotImplementedError()
+
 
 class DatabaseCrawl(Generic[N], Crawl[N]):
     def __init__(
@@ -182,9 +187,13 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
         except KeyError:
             # this is a new node
             pass
-        ret = CrawledNode(ip=node.address, port=node.port)
+        ret = CrawledNode(ip=node.address, port=node.port, source=node.source)
         self.db.nodes.append(ret)
         return ret
+
+    def update_node(self, node: CrawledNode):
+        with self.db:
+            self.db.nodes.update(node)
 
     def add_event(self, node: CrawledNode, event: str, description: str, timestamp: Optional[DateTime] = None):
         with self.db:

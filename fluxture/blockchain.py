@@ -34,12 +34,13 @@ class Version:
 
 
 class Node(metaclass=ABCMeta):
-    def __init__(self, address: Union[str, bytes, IPv4Address, IPv6Address], port: int):
+    def __init__(self, address: Union[str, bytes, IPv4Address, IPv6Address], port: int, source: str = "peer"):
         if not isinstance(address, IPv6Address):
             self.address: IPv6Address = serialization.IPv6Address(address)
         else:
             self.address = address
         self.port: int = port
+        self.source: str = source
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
         self._entries: int = 0
