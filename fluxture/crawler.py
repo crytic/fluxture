@@ -1,4 +1,6 @@
 import asyncio
+import errno
+import resource
 import sys
 import traceback
 from abc import ABCMeta
@@ -11,8 +13,8 @@ from typing import Any, AsyncIterator, Coroutine, Deque, Dict, FrozenSet, Generi
 from geoip2.errors import AddressNotFoundError
 from tqdm import tqdm
 
-from .blockchain import Blockchain, BLOCKCHAINS, Miner, Node
-from .crawl_schema import Crawl, CrawlDatabase, DatabaseCrawl, DateTime, N
+from .blockchain import Blockchain, BLOCKCHAINS, BlockchainError, Miner, Node
+from .crawl_schema import Crawl, CrawlDatabase, CrawlState, DatabaseCrawl, DateTime, N
 from .fluxture import Command
 from .geolocation import download_maxmind_db, GeoIP2Error, GeoIP2Locator, Geolocator
 
@@ -61,35 +63,62 @@ class Crawler(Generic[N], metaclass=ABCMeta):
             blockchain: Blockchain[N],
             crawl: Crawl[N],
             geolocator: Optional[Geolocator] = None,
-            max_connections: int = 1024
+            max_connections: Optional[int] = None
     ):
         self.blockchain: Blockchain[N] = blockchain
         self.crawl: Crawl[N] = crawl
         self.geolocator: Optional[Geolocator] = geolocator
         self.nodes: Dict[N, N] = {}
+        if max_connections is None:
+            max_connections = resource.getrlimit(resource.RLIMIT_NOFILE)[0] // 3 * 2
+        max_connections = max(max_connections, 1)
         self.max_connections: int = max_connections
         self.listener_tasks: List[Future] = []
 
     async def _crawl_node(self, node: N) -> FrozenSet[N]:
         if self.geolocator is not None:
-            self.crawl.set_location(node.address, self.geolocator.locate(node.address))
-        async with node:
-            neighbors = []
-            new_neighbors = set()
-            for neighbor in await self.blockchain.get_neighbors(node):
-                if neighbor in self.nodes:
-                    neighbors.append(self.nodes[neighbor])
-                else:
-                    self.nodes[neighbor] = neighbor
-                    neighbors.append(neighbor)
-                    new_neighbors.add(neighbor)
-            self.crawl.set_neighbors(node, frozenset(neighbors))
-            version = await self.blockchain.get_version(node)
-            if version is not None:
-                crawled_node = self.crawl.get_node(node)
-                self.crawl.add_event(crawled_node, event="version", description=version.version,
-                                     timestamp=DateTime(version.timestamp))
-            return frozenset(new_neighbors)
+            try:
+                self.crawl.set_location(node.address, self.geolocator.locate(node.address))
+                self.crawl.add_state(node, CrawlState.GEOLOCATED)
+            except AddressNotFoundError:
+                pass
+        self.crawl.add_state(node, CrawlState.ATTEMPTED_CONNECTION)
+        try:
+            async with node:
+                self.crawl.add_state(node, CrawlState.CONNECTED)
+                neighbors = []
+                new_neighbors = set()
+                self.crawl.add_state(node, CrawlState.REQUESTED_NEIGHBORS)
+                for neighbor in await self.blockchain.get_neighbors(node):
+                    if neighbor in self.nodes:
+                        # we have already seen this node
+                        neighbors.append(self.nodes[neighbor])
+                    else:
+                        self.nodes[neighbor] = neighbor
+                        neighbors.append(neighbor)
+                        new_neighbors.add(neighbor)
+                self.crawl.set_neighbors(node, frozenset(neighbors))
+                self.crawl.add_state(node, CrawlState.GOT_NEIGHBORS | CrawlState.REQUESTED_VERSION)
+                version = await self.blockchain.get_version(node)
+                if version is not None:
+                    self.crawl.add_state(node, CrawlState.GOT_VERSION)
+                    crawled_node = self.crawl.get_node(node)
+                    self.crawl.add_event(crawled_node, event="version", description=version.version,
+                                         timestamp=DateTime(version.timestamp))
+                return frozenset(new_neighbors)
+        except BrokenPipeError:
+            self.crawl.add_state(node, CrawlState.CONNECTION_RESET)
+            raise
+        except OSError as e:
+            if e.errno in (errno.ETIMEDOUT, errno.ECONNREFUSED, errno.EHOSTDOWN, errno.EHOSTUNREACH):
+                # Connection failed
+                self.crawl.add_state(node, CrawlState.CONNECTION_FAILED)
+            else:
+                # Something happened after we connected (e.g., connection reset by peer)
+                self.crawl.add_state(node, CrawlState.CONNECTION_RESET)
+            raise
+        finally:
+            await node.close()
 
     def add_tasks(self, *tasks: Union[Future, Coroutine[Any, Any, None]]):
         for task in tasks:
@@ -124,17 +153,27 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                 done, pending = await asyncio.wait(waiting_on, return_when=asyncio.FIRST_COMPLETED)
                 futures = list(pending)
                 for result in await asyncio.gather(*done, return_exceptions=True):
+                    # iterate over all of the new neighbors of the node
                     if isinstance(result, StopAsyncIteration) and seed_iter is not None:
                         seed_iter = None
                     elif isinstance(result, Exception):
                         # TODO: Save the exception to the database
                         # self.crawl.add_event(node, event="Exception", description=str(result))
-                        if isinstance(result, (ConnectionError, OSError, BrokenPipeError)):
+                        if isinstance(result, (ConnectionError, OSError, BrokenPipeError, BlockchainError)):
                             print(str(result))
                         else:
                             traceback.print_tb(result.__traceback__)
                             print(result)
                     elif seed_iter is not None and isinstance(result, Node):
+                        # This is a seed
+                        crawled_node = self.crawl.get_node(result)
+                        if crawled_node.source != result.source:
+                            # this means we already organically encountered this node from another peer
+                            # so update its source to be the seed
+                            crawled_node.source = result.source
+                            self.crawl.update_node(crawled_node)
+                        self.crawl.add_state(crawled_node, CrawlState.DISCOVERED)
+                        # Check if we have already encountered this node
                         queue.append(result)
                         num_seeds += 1
                         futures.append(ensure_future(seed_iter.__anext__()))
@@ -170,8 +209,7 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                 )
 
         for miner in await self.blockchain.get_miners():
-            if miner not in self.crawl:
-                self.crawl.set_miner(miner, Miner.MINER)
+            self.crawl.set_miner(miner, Miner.MINER)
 
         for node in self.nodes.values():
             if node.is_running:
@@ -309,6 +347,11 @@ class CrawlCommand(Command):
     def __init_arguments__(self, parser: ArgumentParser):
         parser.add_argument("--database", "-db", type=str, default=":memory:",
                             help="path to the crawl database (default is to run in memory)")
+        max_file_descriptors, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+        parser.add_argument("--max-connections", "-m", type=int, default=None,
+                            help="the maximum number of connections to open at once during the crawl, capped at "
+                                 f"⅔ of `ulimit -n` = {max(max_file_descriptors // 3 * 2, 1)} (default is to use the "
+                                 "maximum possible)")
         parser.add_argument("BLOCKCHAIN_NAME", type=str, help="the name of the blockchain to crawl",
                             choices=BLOCKCHAINS.keys())
 
@@ -325,12 +368,30 @@ class CrawlCommand(Command):
 
         blockchain_type = BLOCKCHAINS[args.BLOCKCHAIN_NAME]
 
+        if args.max_connections is None:
+            max_file_handles, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+            if sys.stderr.isatty() and sys.stdin.isatty():
+                if max_file_handles < 1024:
+                    while True:
+                        sys.stderr.write(f"`uname -n` is {max_file_handles}, which is low and will cause the crawl to "
+                                         "be very slow.\nWould you like to increase this value to 32768? [Yn] ")
+                        choice = input("")
+                        if choice.lower() == "y" or len(choice.strip()) == 0:
+                            resource.setrlimit(resource.RLIMIT_NOFILE, (32768, resource.RLIM_INFINITY))
+                            max_file_handles, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+                        elif choice.lower() == "n":
+                            break
+            max_connections = max(max_file_handles // 3 * 2, 1)
+        else:
+            max_connections = args.max_connections
+
         def crawl():
             with CrawlDatabase(args.database) as db:
                 Crawler(
                     blockchain=blockchain_type(),
                     crawl=DatabaseCrawl(blockchain_type.node_type, db),
-                    geolocator=geo
+                    geolocator=geo,
+                    max_connections=max_connections
                 ).do_crawl()
 
         if geo is None:

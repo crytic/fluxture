@@ -9,6 +9,7 @@ from .structures import Struct, StructMeta
 FieldType = Union[bool, int, float, str, bytes, Packable, "ForeignKey"]
 
 T = TypeVar("T", bound=FieldType)
+D = TypeVar("D")
 
 
 class AutoIncrement(int):
@@ -255,55 +256,28 @@ def sql_format(
         raise ValueError(f"Unsupported parameter type: {param!r}")
 
 
-class DatabaseConnection:
-    def __init__(self, *args, **kwargs):
-        self._args = args
-        self._kwargs = kwargs
-        self._con: Optional[sqlite3.Connection] = None
-        self._entries: int = 0
-        if ("database" in self._kwargs and self._kwargs["database"] == ":memory:") or \
-                (self._args and self._args[0] == ":memory:"):
-            # if using an in-memory database, always stay connected
-            self.__enter__()
+class DatabaseConnection(sqlite3.Connection):
+    def __init__(self, *args, rollback_on_exception: bool = False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.rollback_on_exception: bool = rollback_on_exception
 
-    def cursor(self) -> sqlite3.Cursor:
-        return self._con.cursor()
-
-    def commit(self):
-        self._con.commit()
-
-    def rollback(self, *args, **kwargs):
-        self._con.rollback(*args, **kwargs)
-
-    def execute(self, sql: str, *parameters: COLUMN_TYPES):
+    def execute(self, sql: str, *parameters: COLUMN_TYPES) -> sqlite3.Cursor:
         params = [sql_format(p) for p in parameters]
         try:
-            self._con.execute(sql, params)
+            return super().execute(sql, params)
         except sqlite3.Error as e:
             raise ValueError(f"Error executing SQL {sql!r} with parameters {params!r}: {e!r}")
 
     def __enter__(self) -> "DatabaseConnection":
-        if self._entries == 0 and self._con is None:
-            self._con = sqlite3.connect(*self._args, **self._kwargs)
-        self._entries += 1
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if exc_type is None:
+        if exc_type is None or not self.rollback_on_exception:
             # no exception occurred
             self.commit()
         else:
             # an exception occurred
             self.rollback()
-        if self._entries <= 1 and self._con is not None:
-            self._con.close()
-            self._con = None
-        self._entries = max(self._entries - 1, 0)
-
-    def __getattr__(self, item):
-        if self._con is None:
-            raise AttributeError(item)
-        return getattr(self._con, item)
 
 
 class Cursor(Generic[M]):
@@ -573,9 +547,9 @@ class ForeignKey(Generic[M]):
 
 
 class Database(metaclass=StructMeta[Model]):
-    def __init__(self, path: str = ":memory:"):
+    def __init__(self, path: str = ":memory:", rollback_on_exception: bool = False):
         self.path: str = path
-        self.con = DatabaseConnection(self.path)
+        self.con = DatabaseConnection(self.path, rollback_on_exception=rollback_on_exception)
         self.tables: Dict[str, Table] = {}
         if self.FIELDS:
             with self:
@@ -589,12 +563,13 @@ class Database(metaclass=StructMeta[Model]):
                 raise TypeError(f"Database {cls!r} table `{field_name}` was expected to be of type `Table` but "
                                 f"was instead {field_type!r}")
 
-    def __enter__(self) -> "Database":
-        self.con.__enter__()
+    def __enter__(self: D) -> D:
+        # self.con.__enter__()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.con.__exit__(exc_type, exc_val, exc_tb)
+        # self.con.__exit__(exc_type, exc_val, exc_tb)
+        self.con.commit()
 
     def create_table(self, table_name: str, table_type: Type[Table[M]]) -> Table[M]:
         columns = []

@@ -5,7 +5,7 @@ from typing import Callable, FrozenSet, Generic, Optional, Set, Sized, TypeVar, 
 from .blockchain import Miner, Node, Version
 from .db import Cursor, Database, ForeignKey, Model, Table
 from .geolocation import Geolocation
-from .serialization import DateTime, IPv6Address
+from .serialization import DateTime, IntFlag, IPv6Address
 
 
 N = TypeVar("N", bound=Node)
@@ -21,10 +21,26 @@ class HostInfo(Model):
         return hash(self.ip)
 
 
+class CrawlState(IntFlag):
+    UNKNOWN = 0
+    DISCOVERED = 1
+    GEOLOCATED = 2
+    ATTEMPTED_CONNECTION = DISCOVERED | 4
+    CONNECTION_FAILED = ATTEMPTED_CONNECTION | 8
+    CONNECTED = ATTEMPTED_CONNECTION | 16
+    CONNECTION_RESET = CONNECTED | 32
+    REQUESTED_NEIGHBORS = CONNECTED | 64
+    GOT_NEIGHBORS = REQUESTED_NEIGHBORS | 128
+    REQUESTED_VERSION = CONNECTED | 256
+    GOT_VERSION = REQUESTED_VERSION | 512
+
+
 class CrawledNode(Model["CrawlDatabase"]):
     ip: IPv6Address
     port: int
     is_miner: Miner
+    state: CrawlState
+    source: str
 
     def __hash__(self):
         return hash((self.ip, self.port))
@@ -136,6 +152,14 @@ class Crawl(Generic[N], Sized):
     def set_host_info(self, host_info: HostInfo):
         raise NotImplementedError()
 
+    @abstractmethod
+    def add_state(self, node: Union[N, CrawledNode], state: CrawlState):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def update_node(self, node: CrawledNode):
+        raise NotImplementedError()
+
 
 class DatabaseCrawl(Generic[N], Crawl[N]):
     def __init__(
@@ -163,19 +187,24 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
         except KeyError:
             # this is a new node
             pass
-        ret = CrawledNode(ip=node.address, port=node.port)
+        ret = CrawledNode(ip=node.address, port=node.port, source=node.source)
         self.db.nodes.append(ret)
         return ret
 
+    def update_node(self, node: CrawledNode):
+        with self.db:
+            self.db.nodes.update(node)
+
     def add_event(self, node: CrawledNode, event: str, description: str, timestamp: Optional[DateTime] = None):
-        if timestamp is None:
-            timestamp = DateTime()
-        self.db.events.append(CrawlEvent(
-            node=node.rowid,
-            event=event,
-            description=description,
-            timestamp=timestamp
-        ))
+        with self.db:
+            if timestamp is None:
+                timestamp = DateTime()
+            self.db.events.append(CrawlEvent(
+                node=node.rowid,
+                event=event,
+                description=description,
+                timestamp=timestamp
+            ))
 
     def get_neighbors(self, node: N) -> FrozenSet[N]:
         return frozenset({
@@ -183,9 +212,9 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
         })
 
     def set_neighbors(self, node: N, neighbors: FrozenSet[N]):
-        crawled_node = self.get_node(node)
-        timestamp = DateTime()
         with self.db:
+            crawled_node = self.get_node(node)
+            timestamp = DateTime()
             self.db.edges.extend([
                 Edge(
                     from_node=crawled_node,
@@ -194,17 +223,35 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
                 )
                 for neighbor in neighbors
             ])
+            self.add_state(node, CrawlState.GOT_NEIGHBORS)
+            for neighbor in neighbors:
+                # Make sure we record that we discovered the neighbor
+                _ = self.get_node(neighbor)
+                # (simply getting the node for the neighbor will ensure that its state's "discovered" flag is set)
 
     def set_location(self, ip: IPv6Address, location: Geolocation):
-        self.db.locations.append(location)
+        with self.db:
+            self.db.locations.append(location)
 
     def set_miner(self, node: N, miner: Miner):
-        crawled_node = self.get_node(node)
-        crawled_node.is_miner = miner
-        self.db.nodes.update(crawled_node)
+        with self.db:
+            crawled_node = self.get_node(node)
+            crawled_node.is_miner = miner
+            self.db.nodes.update(crawled_node)
 
     def set_host_info(self, host_info: HostInfo):
-        self.db.hosts.append(host_info)
+        with self.db:
+            self.db.hosts.append(host_info)
+
+    def add_state(self, node: Union[N, CrawledNode], state: CrawlState):
+        with self.db:
+            if isinstance(node, CrawledNode):
+                crawled_node = node
+            else:
+                crawled_node = self.get_node(node)
+            if not (crawled_node.state & state):
+                crawled_node.state = crawled_node.state | state
+                self.db.nodes.update(crawled_node)
 
     def __len__(self) -> int:
         return len(self.db.nodes)

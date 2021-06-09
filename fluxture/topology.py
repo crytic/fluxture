@@ -435,11 +435,19 @@ class ExportCommand(Command):
             )
             t.update(1)
 
+            def after_period(obj) -> str:
+                text = str(obj)
+                period_pos = text.find(".")
+                if period_pos > 0:
+                    return text[period_pos + 1:]
+                return text
+
             if args.format == "arff":
                 cities: Set[str] = {"?"}
                 countries: Set[str] = {"?"}
                 continents: Set[str] = {"?"}
                 versions: Set[str] = {"?"}
+                states: Set[str] = set()
                 for node in graph:
                     loc = node.get_location()
                     if loc is not None:
@@ -452,6 +460,7 @@ class ExportCommand(Command):
                     version = node.get_version()
                     if version is not None:
                         versions.add(repr(version.version))
+                    states.add(after_period(node.state))
                 print(f"""% Fluxture crawl
     % Source: {args.CRAWL_DB_FILE}
     
@@ -461,7 +470,8 @@ class ExportCommand(Command):
     @ATTRIBUTE continent              {{{','.join(map(repr, continents))}}}
     @ATTRIBUTE country                {{{','.join(map(repr, countries))}}}
     @ATTRIBUTE city                   {{{','.join(map(repr, cities))}}}
-    @ATTRIBUTE crawled                {{TRUE, FALSE}}
+    @ATTRIBUTE connected              {{TRUE, FALSE}}
+    @ATTRIBUTE state                  {{{','.join(map(repr, states))}}}
     @ATTRIBUTE version                {{{','.join(versions)}}}
     @ATTRIBUTE out_degree             NUMERIC
     @ATTRIBUTE in_degree              NUMERIC
@@ -478,8 +488,8 @@ class ExportCommand(Command):
     """)
             else:
                 # Assume CSV format
-                print("ip,continent,country,city,crawled,version,out_degree,in_degree,mutual_neighbors,centrality,"
-                      "miner_probability,avg_shortest_dist,expected_dist_to_miner,crawled_out_degree,"
+                print("ip,continent,country,city,connected,state,version,out_degree,in_degree,mutual_neighbors,"
+                      "centrality,miner_probability,avg_shortest_dist,expected_dist_to_miner,crawled_out_degree,"
                       "crawled_in_degree,crawled_centrality")
             for node in tqdm(graph, desc="writing", unit=" nodes", leave=False):
                 loc = node.get_location()
@@ -517,6 +527,7 @@ class ExportCommand(Command):
                     weighted_rank = ""
                 num_mutual_neighbors = sum(1 for neighbor in graph.neighbors(node) if graph.has_edge(neighbor, node))
                 print(f"{node.ip!s},{continent},{country},{city},{['TRUE', 'FALSE'][node.last_crawled() is None]},"
+                      f"{repr(after_period(node.state))},"
                       f"{version_str},{graph.out_degree[node]},{graph.in_degree[node]},{num_mutual_neighbors},"
                       f"{weighted_page_rank[node]},{miner_probability[node]},"
                       f"{sum(distances[weighted_graph.node_indexes[node]])/len(weighted_graph)},"
@@ -538,6 +549,28 @@ def kl_divergence(dist1: Iterable[float], dist2: Iterable[float]) -> float:
     values2 /= values2.sum(0)
 
     return np.sum(np.where(values1 != 0, values1 * np.log(values1 / values2), 0))  # type: ignore
+
+
+class UnreachableNodes(Command):
+    name = "unreachable"
+    help = "reports statistics on nodes that were reported as neighbors by nodes we crawled but were unreachable"
+
+    def __init_arguments__(self, parser: ArgumentParser):
+        parser.add_argument("CRAWL_DB_FILE", type=str,
+                            help="path to the crawl database")
+
+    def run(self, args):
+        with CrawlDatabase(args.CRAWL_DB_FILE) as db:
+            num_nodes = len(db.nodes)
+            crawled_nodes = set(db.crawled_nodes)
+            print(f"% crawled:\t{len(crawled_nodes)/num_nodes}")
+            num_out_edges = 0
+            num_crawled_out_edges = 0
+            for node in crawled_nodes:
+                neighbors = node.get_latest_edges()
+                num_out_edges += len(neighbors)
+                num_crawled_out_edges += sum(1 for neighbor in neighbors if neighbor in crawled_nodes)
+            print(f"% unreachable:\t{num_crawled_out_edges/num_out_edges}")
 
 
 class NodeRemoval(Command):

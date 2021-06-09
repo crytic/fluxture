@@ -8,6 +8,10 @@ from .messaging import Message
 from . import serialization
 
 
+class BlockchainError(RuntimeError):
+    pass
+
+
 class Miner(serialization.IntEnum):
     UNKNOWN = 0
     MINER = 1
@@ -30,12 +34,13 @@ class Version:
 
 
 class Node(metaclass=ABCMeta):
-    def __init__(self, address: Union[str, bytes, IPv4Address, IPv6Address], port: int):
+    def __init__(self, address: Union[str, bytes, IPv4Address, IPv6Address], port: int, source: str = "peer"):
         if not isinstance(address, IPv6Address):
             self.address: IPv6Address = serialization.IPv6Address(address)
         else:
             self.address = address
         self.port: int = port
+        self.source: str = source
         self._reader: Optional[asyncio.StreamReader] = None
         self._writer: Optional[asyncio.StreamWriter] = None
         self._entries: int = 0
@@ -67,7 +72,11 @@ class Node(metaclass=ABCMeta):
 
     async def connect(self):
         if self._reader is None:
-            self._reader, self._writer = await asyncio.open_connection(str(self.address), self.port)
+            self._reader, self._writer = await asyncio.open_connection(
+                str(self.address),
+                self.port,
+                happy_eyeballs_delay=0.25  # this causes IPv4 and IPv6 attempts to be interleaved
+            )
             if self._stop is None:
                 self._stop = asyncio.Event()
             elif self._stop.is_set():
@@ -76,7 +85,11 @@ class Node(metaclass=ABCMeta):
     async def close(self):
         if self._writer is not None:
             self._writer.close()
-            await self._writer.wait_closed()
+            try:
+                await self._writer.wait_closed()
+            except BrokenPipeError:
+                # this is expected
+                pass
             self._reader = None
             self._writer = None
             if not self._stop.is_set():

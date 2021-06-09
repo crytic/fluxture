@@ -8,7 +8,7 @@ from collections import OrderedDict
 from enum import Enum as PythonEnum
 from inspect import isabstract
 from typing import (
-    Iterator, OrderedDict as OrderedDictType, Tuple, Type, TypeVar, Union
+    Dict, Generic, Iterator, OrderedDict as OrderedDictType, Tuple, Type, TypeVar, Union
 )
 from typing_extensions import Protocol, runtime_checkable
 
@@ -117,21 +117,39 @@ class FixedSize(Protocol):
     num_bytes: int
 
 
-class IntEnumMeta(ABCMeta):
-    __members__: OrderedDictType[str, "IntEnum"]
+E = TypeVar("E")
+
+
+class IntEnumMeta(ABCMeta, Generic[E]):
+    __members__: OrderedDictType[str, E]
+    min_value: int
+    max_value: int
 
     def __init__(cls, name, bases, clsdict):
         super().__init__(name, bases, clsdict)
         cls.__members__ = OrderedDict()
-        if not isabstract(cls) and name != "IntEnum":
+        if not isabstract(cls) and name != "IntEnum" and name != "IntFlag" and name != "AbstractIntEnum":
+            values: Dict[int, str] = {}
             for v_name, value in clsdict.items():
                 if v_name.startswith("_") or v_name == "DEFAULT":
                     continue
                 elif not isinstance(value, int):
                     raise TypeError(f"{name}.{v_name} must be of type `int`, not {type(value)}")
+                elif value in values:
+                    raise TypeError(f"{name}.{v_name} has the same value as {name}.{values[value]}")
+                if not values:
+                    # this is the first value
+                    cls.min_value = value
+                    cls.max_value = value
+                else:
+                    cls.min_value = min(cls.min_value, value)
+                    cls.max_value = max(cls.max_value, value)
+                values[value] = v_name
                 int_enum = cls(value, name=v_name)
                 cls.__members__[v_name] = int_enum
+                setattr(int_enum, "name", v_name)
                 setattr(cls, v_name, int_enum)
+
             if "DEFAULT" in clsdict:
                 if clsdict["DEFAULT"] not in cls.__members__:
                     raise TypeError(f"Invalid default value {name}.DEFAULT = {clsdict['DEFAULT']!r}")
@@ -141,17 +159,101 @@ class IntEnumMeta(ABCMeta):
             # call get_type() to ensure that all of the values are within range
             getattr(cls, "DEFAULT").get_type()
 
-    def __iter__(self) -> Iterator["IntEnum"]:
-        return iter(self.__members__.values())
+    def __iter__(cls) -> Iterator[E]:
+        return iter(cls.__members__.values())
 
-    def __getitem__(cls, name: str):
+    def get(cls, name: str) -> E:
         return cls.__members__[name]
 
 
-class IntEnum(int, AbstractPackable, metaclass=IntEnumMeta):
+class AbstractIntEnum(int, AbstractPackable, Generic[E], metaclass=IntEnumMeta[E]):
     name: str
-    DEFAULT: "IntEnum"
+    DEFAULT: E
 
+    def value(self) -> int:
+        return int(self)
+
+    def __str__(self):
+        return f"{self.__class__.__name__}.{self.name}"
+
+    def __repr__(self):
+        return f"<{self!s}: {self.value()}>"
+
+    @classmethod
+    def get_type(cls: IntEnumMeta[E]) -> "Type[SizedInteger]":
+        for int_type in (UInt8, UInt16, UInt32, UInt64, Int8, Int16, Int32, Int64):
+            if cls.min_value >= int_type.MIN_VALUE and cls.max_value <= int_type.MAX_VALUE:
+                return int_type
+        raise TypeError("There is no SizedInteger type that can represent enum "
+                        f"{cls.__name__} on the range [{cls.min_value}, {cls.max_value}]")
+
+    def pack(self, byte_order: ByteOrder = ByteOrder.NETWORK) -> bytes:
+        int_type = self.get_type()(self.value())
+        return int_type.pack(byte_order)
+
+    @classmethod
+    def unpack_partial(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> Tuple[P, bytes]:
+        int_type, remainder = cls.get_type().unpack_partial(data, byte_order)
+        return cls(int(int_type)), remainder
+
+    @classmethod
+    async def read(cls: Type[P], reader: asyncio.StreamReader, byte_order: ByteOrder = ByteOrder.NETWORK) -> P:
+        int_type = cls.get_type().read(reader, byte_order)
+        return cls(int_type)
+
+    def __or__(self, other) -> E:
+        return self.__class__(int(self) | int(other))
+
+    __ror__ = __or__
+
+    def __and__(self, other) -> E:
+        return self.__class__(int(self) & int(other))
+
+    __rand__ = __and__
+
+    def __neg__(self) -> E:
+        return self.__class__(int(self) ^ ((1 << self.__class__.max_value.bit_length()) - 1))
+
+    def __xor__(self, other) -> E:
+        return self.__class__(int(self) ^ int(other))
+
+    __rxor__ = __xor__
+
+
+class IntFlag(AbstractIntEnum["IntFlag"]):
+    def __new__(cls, *args, **kwargs):
+        if "name" in kwargs:
+            name = kwargs["name"]
+            del kwargs["name"]
+            if args:
+                value = args[0]
+                args = args[1:]
+                result = int.__new__(cls, value, *args, **kwargs)
+            elif name in cls.__members__:
+                return cls.__members__[name]
+            else:
+                raise ValueError(f"Invalid enum name {name!r}; possibilities are {list(cls.__members__.keys())!r}")
+        elif not args:
+            return cls.DEFAULT
+        else:
+            result = int.__new__(cls, *args, **kwargs)
+        setattr(result, "name", None)
+        return result
+
+    @property
+    def names(self) -> Iterator[str]:
+        if self.name is not None:
+            yield self.name
+        else:
+            for member_name, value in self.__class__.__members__.items():
+                if bool(value & int(self)):
+                    yield member_name
+
+    def __str__(self):
+        return f"{self.__class__.__name__}.{'|'.join(self.names)}"
+
+
+class IntEnum(AbstractIntEnum["IntEnum"]):
     def __new__(cls, *args, **kwargs):
         if "name" in kwargs:
             name = kwargs["name"]
@@ -174,44 +276,6 @@ class IntEnum(int, AbstractPackable, metaclass=IntEnumMeta):
         result = int.__new__(cls, value, *args, **kwargs)
         setattr(result, "name", name)
         return result
-
-    def value(self) -> int:
-        return int(self)
-
-    def __str__(self):
-        return f"{self.__class__.__name__}.{self.name}"
-
-    def __repr__(self):
-        return f"<{self!s}: {self.value()}>"
-
-    @classmethod
-    def get_type(cls) -> "Type[SizedInteger]":
-        min_value = None
-        max_value = None
-        for possibility in map(int, cls):
-            if min_value is None or min_value > possibility:
-                min_value = possibility
-            if max_value is None or max_value < possibility:
-                max_value = possibility
-        for int_type in (UInt8, UInt16, UInt32, UInt64, Int8, Int16, Int32, Int64):
-            if min_value >= int_type.MIN_VALUE and max_value <= int_type.MAX_VALUE:
-                return int_type
-        raise TypeError("There is no SizedInteger type that can represent enum "
-                        f"{cls.__name__} on the range [{min_value}, {max_value}]")
-
-    def pack(self, byte_order: ByteOrder = ByteOrder.NETWORK) -> bytes:
-        int_type = self.get_type()(self.value())
-        return int_type.pack(byte_order)
-
-    @classmethod
-    def unpack_partial(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> Tuple[P, bytes]:
-        int_type, remainder = cls.get_type().unpack_partial(data, byte_order)
-        return cls(int(int_type)), remainder
-
-    @classmethod
-    async def read(cls: Type[P], reader: asyncio.StreamReader, byte_order: ByteOrder = ByteOrder.NETWORK) -> P:
-        int_type = cls.get_type().read(reader, byte_order)
-        return cls(int_type)
 
 
 class IPv6Address(ipaddress.IPv6Address, AbstractPackable):

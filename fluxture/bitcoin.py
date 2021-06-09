@@ -1,5 +1,6 @@
 import asyncio
 import socket
+import sys
 from abc import ABC
 from hashlib import sha256
 from ipaddress import IPv4Address, IPv6Address
@@ -9,7 +10,7 @@ from typing import AsyncIterator, Dict, FrozenSet, Generic, KeysView, List, Opti
 
 import fluxture.structures
 
-from .blockchain import Blockchain, get_public_ip, Miner, Node, Version
+from .blockchain import Blockchain, BlockchainError, get_public_ip, Miner, Node, Version
 from .messaging import BinaryMessage
 from .serialization import ByteOrder, P, UnpackError
 from .shodan import get_api, SearchQuery, ShodanResult
@@ -27,7 +28,7 @@ MINER_QUERY = SearchQuery.register(name="BitcoinMiner", query="antminer")
 B = TypeVar('B', bound="BitcoinMessage")
 
 
-class BitcoinError(RuntimeError):
+class BitcoinError(BlockchainError):
     pass
 
 
@@ -363,8 +364,8 @@ class AddrMessage(BitcoinMessage):
 
 
 class BitcoinNode(Node):
-    def __init__(self, address: Union[str, IPv4Address, IPv6Address], port: int = 8333):
-        super().__init__(address, port)
+    def __init__(self, address: Union[str, IPv4Address, IPv6Address], port: int = 8333, source: str = "peer"):
+        super().__init__(address, port, source)
         self.connected: bool = False
         self.connecting: bool = False
         self.version: Optional[VersionMessage] = None
@@ -429,22 +430,31 @@ class BitcoinNode(Node):
                     await gather
                 except asyncio.CancelledError:
                     pass
-                message = done.pop().result()
-                if message is None:
-                    break
-                elif self.is_running:
-                    # print(f"{self.address}:{self.port} {message}")
-                    if isinstance(message, VersionMessage):
-                        self.version = message
-                        await self.send_message(VerackMessage())
-                    elif isinstance(message, Ping):
-                        await self.send_message(Pong(nonce=message.nonce))
+                got_message = False
+                for result in done:
+                    try:
+                        message = result.result()
+                    except (NotImplementedError, ValueError, UnpackError) as e:
+                        sys.stderr.write(f"Warning: {e!s}")
+                        continue
+                    if not isinstance(message, BitcoinMessage):
+                        continue
+                    got_message = True
+                    if self.is_running:
+                        # print(f"{self.address}:{self.port} {message}")
+                        if isinstance(message, VersionMessage):
+                            self.version = message
+                            await self.send_message(VerackMessage())
+                        elif isinstance(message, Ping):
+                            await self.send_message(Pong(nonce=message.nonce))
                     yield message
+                if not got_message:
+                    break
 
 
 async def collect_addresses(url: str, port: int = 8333) -> Tuple[BitcoinNode, ...]:
     return tuple(
-        BitcoinNode(addr[4][0])
+        BitcoinNode(addr[4][0], source="seed")
         for addr in await asyncio.get_running_loop().getaddrinfo(url, port, proto=socket.IPPROTO_TCP)
     )
 
@@ -452,21 +462,43 @@ async def collect_addresses(url: str, port: int = 8333) -> Tuple[BitcoinNode, ..
 async def collect_defaults(
         *args: Union[Tuple[str], Tuple[str, int]], use_shodan: bool = True
 ) -> AsyncIterator[BitcoinNode]:
-    yielded = set()
+    yielded: Set[IPv6Address] = set()
+    futures = [asyncio.ensure_future(collect_addresses(*arg)) for arg in args]
     if use_shodan:
-        async for shodan_result in NODE_QUERY.run_async(get_api()):
-            if shodan_result.ip not in yielded:
-                yield BitcoinNode(shodan_result.ip)
-                yielded.add(shodan_result.ip)
-        log.info(f"Got {len(yielded)} seed nodes from Shodan")
-    yielded_before = len(yielded)
-    for result in await asyncio.gather(*(collect_addresses(*arg) for arg in args), return_exceptions=True):
-        if isinstance(result, Exception):
-            print(f"Error connecting to seed: {result!s}")
-        elif result.ip not in yielded:
-            yield result
-            yielded.add(result.ip)
-    log.info(f"Got {len(yielded) - yielded_before} node IPs from the default Bitcoin seeds")
+        shodan_iterator: Optional[AsyncIterator[ShodanResult]] = NODE_QUERY.run_async(get_api()).__aiter__()
+        futures.append(asyncio.ensure_future(shodan_iterator.__anext__()))
+    else:
+        shodan_iterator = None
+    shodan_results = 0
+    bitcoin_seeds = 0
+    while futures:
+        done, pending = await asyncio.wait(futures, return_when=asyncio.FIRST_COMPLETED)
+        futures = list(pending)
+        for result in await asyncio.gather(*done, return_exceptions=True):
+            if isinstance(result, StopAsyncIteration):
+                shodan_iterator = None
+                continue
+            elif isinstance(result, ShodanResult) and shodan_iterator is not None:
+                if result.ip not in yielded:
+                    yield BitcoinNode(result.ip, source="shodan")
+                    yielded.add(result.ip)
+                shodan_results += 1
+                futures.append(asyncio.ensure_future(shodan_iterator.__anext__()))
+            elif isinstance(result, Exception):
+                sys.stderr.write(f"{result!s}\n")
+                continue
+            else:
+                # this should be an iterable of BitcoinNodes
+                for node in result:  # type: ignore
+                    assert isinstance(node, BitcoinNode)
+                    bitcoin_seeds += 1
+                    if node.address not in yielded:
+                        yield node
+                        yielded.add(node.address)
+            sys.stderr.write("Got ")
+            if use_shodan:
+                sys.stderr.write(f"{shodan_results} seed nodes from Shodan and ")
+            sys.stderr.write(f"{bitcoin_seeds} official Bitcoin seed nodes\n")
 
 
 class Bitcoin(Blockchain[BitcoinNode]):
