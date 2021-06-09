@@ -158,6 +158,9 @@ class Crawl(Generic[N], Sized):
     def update_node(self, node: CrawledNode):
         raise NotImplementedError()
 
+    def commit(self):
+        pass
+
 
 class DatabaseCrawl(Generic[N], Crawl[N]):
     def __init__(
@@ -178,6 +181,9 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
         except StopIteration:
             pass
         raise KeyError(node)
+
+    def commit(self):
+        self.db.con.commit()
 
     def get_node(self, node: N) -> CrawledNode:
         try:
@@ -247,7 +253,7 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
                 crawled_node = node
             else:
                 crawled_node = self.get_node(node)
-            if not (crawled_node.state & state):
+            if crawled_node.state & state != state:
                 crawled_node.state = crawled_node.state | state
                 self.db.nodes.update(crawled_node)
 

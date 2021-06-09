@@ -148,8 +148,9 @@ class Crawler(Generic[N], metaclass=ABCMeta):
             queue = deque(seeds)
             futures: List[Future] = []
             num_seeds = len(seeds)
+        num_connected_to = 0
         while futures or queue or self.listener_tasks:
-            print(f"Discovered {len(self.nodes)} nodes ({num_seeds} seeds); crawled {len(self.crawl)}; "
+            print(f"Discovered {len(self.nodes)} nodes ({num_seeds} seeds); crawled {num_connected_to}; "
                   f"crawling {len(futures)}; waiting to crawl {len(queue)}...")
             if futures:
                 waiting_on = futures
@@ -181,6 +182,7 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                         num_seeds += 1
                         futures.append(ensure_future(seed_iter.__anext__()))
                     else:
+                        num_connected_to += 1
                         queue.extend(result)
             if self.listener_tasks:
                 waiting_on = self.listener_tasks
@@ -210,6 +212,7 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                         for listener in CRAWL_LISTENERS if listener.has_on_crawl_node
                     )
                 )
+            self.crawl.commit()
 
         for miner in await self.blockchain.get_miners():
             self.crawl.set_miner(miner, Miner.MINER)
