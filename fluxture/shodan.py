@@ -3,7 +3,7 @@ from abc import ABC
 from argparse import ArgumentParser, Namespace
 from getpass import getpass
 from time import sleep
-from typing import Any, Callable, Dict, Iterable, Iterator, Optional, Tuple
+from typing import Any, AsyncIterator, Callable, Dict, Iterable, Iterator, Optional, Tuple
 
 import keyring
 from shodan import APIError, Shodan
@@ -117,9 +117,9 @@ class SearchQuery(Query):
         for result in api.search_cursor(self.query):
             yield ShodanResult(**result)
 
-    @iterator_to_async(poll_interval=1.0)
-    def run_async(self, api: Shodan):
-        return self.run(api)
+    @iterator_to_async(poll_interval=0.5)
+    def run_async(self, api: Shodan) -> AsyncIterator[ShodanResult]:
+        return self.run(api)  # type: ignore
 
     def __repr__(self):
         return f"{self.__class__.__name__}(name={self.name!r}, query={self.query!r}, callback={self.callback!r})"

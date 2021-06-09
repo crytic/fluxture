@@ -245,7 +245,9 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
 
     def add_state(self, node: Union[N, CrawledNode], state: CrawlState):
         with self.db:
-            if not isinstance(node, CrawledNode):
+            if isinstance(node, CrawledNode):
+                crawled_node = node
+            else:
                 crawled_node = self.get_node(node)
             if not (crawled_node.state & state):
                 crawled_node.state = crawled_node.state | state

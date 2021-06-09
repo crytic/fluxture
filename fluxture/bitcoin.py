@@ -462,21 +462,43 @@ async def collect_addresses(url: str, port: int = 8333) -> Tuple[BitcoinNode, ..
 async def collect_defaults(
         *args: Union[Tuple[str], Tuple[str, int]], use_shodan: bool = True
 ) -> AsyncIterator[BitcoinNode]:
-    yielded = set()
+    yielded: Set[IPv6Address] = set()
+    futures = [asyncio.ensure_future(collect_addresses(*arg)) for arg in args]
     if use_shodan:
-        async for shodan_result in NODE_QUERY.run_async(get_api()):
-            if shodan_result.ip not in yielded:
-                yield BitcoinNode(shodan_result.ip, source="shodan")
-                yielded.add(shodan_result.ip)
-        log.info(f"Got {len(yielded)} seed nodes from Shodan")
-    yielded_before = len(yielded)
-    for result in await asyncio.gather(*(collect_addresses(*arg) for arg in args), return_exceptions=True):
-        if isinstance(result, Exception):
-            print(f"Error connecting to seed: {result!s}")
-        elif result.ip not in yielded:
-            yield result
-            yielded.add(result.ip)
-    log.info(f"Got {len(yielded) - yielded_before} node IPs from the default Bitcoin seeds")
+        shodan_iterator: Optional[AsyncIterator[ShodanResult]] = NODE_QUERY.run_async(get_api()).__aiter__()
+        futures.append(asyncio.ensure_future(shodan_iterator.__anext__()))
+    else:
+        shodan_iterator = None
+    shodan_results = 0
+    bitcoin_seeds = 0
+    while futures:
+        done, pending = await asyncio.wait(futures, return_when=asyncio.FIRST_COMPLETED)
+        futures = list(pending)
+        for result in await asyncio.gather(*done, return_exceptions=True):
+            if isinstance(result, StopAsyncIteration):
+                shodan_iterator = None
+                continue
+            elif isinstance(result, ShodanResult) and shodan_iterator is not None:
+                if result.ip not in yielded:
+                    yield BitcoinNode(result.ip, source="shodan")
+                    yielded.add(result.ip)
+                shodan_results += 1
+                futures.append(asyncio.ensure_future(shodan_iterator.__anext__()))
+            elif isinstance(result, Exception):
+                sys.stderr.write(f"{result!s}\n")
+                continue
+            else:
+                # this should be an iterable of BitcoinNodes
+                for node in result:  # type: ignore
+                    assert isinstance(node, BitcoinNode)
+                    bitcoin_seeds += 1
+                    if node.address not in yielded:
+                        yield node
+                        yielded.add(node.address)
+            sys.stderr.write("Got ")
+            if use_shodan:
+                sys.stderr.write(f"{shodan_results} seed nodes from Shodan and ")
+            sys.stderr.write(f"{bitcoin_seeds} official Bitcoin seed nodes\n")
 
 
 class Bitcoin(Blockchain[BitcoinNode]):

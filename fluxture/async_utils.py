@@ -51,7 +51,7 @@ class SyncIteratorWrapper(Generic[T]):
                 elif self.thread is None or not self.thread.is_alive():
                     # The thread finished and there are no more results
                     self.thread = None
-                    raise StopAsyncIteration
+                    raise StopAsyncIteration()
             await asyncio.sleep(self.poll_interval)
 
 
@@ -59,7 +59,7 @@ def iterator_to_async(
         to_wrap: Optional[Callable[..., Iterator[T]]] = None,
         *,
         poll_interval: float = 0.5
-) -> Callable[..., AsyncIterator[T]]:
+):
     """Decorator to automatically convert a synchronous function that returns an iterator to be asynchronous"""
     if to_wrap is None:
         # this will happen if the user optionally passes a `poll_interval` argument
