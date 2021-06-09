@@ -22,6 +22,7 @@ class HostInfo(Model):
 
 
 class CrawlState(IntFlag):
+    UNKNOWN = 0
     DISCOVERED = 1
     GEOLOCATED = 2
     ATTEMPTED_CONNECTION = DISCOVERED | 4
@@ -32,7 +33,6 @@ class CrawlState(IntFlag):
     GOT_NEIGHBORS = REQUESTED_NEIGHBORS | 128
     REQUESTED_VERSION = CONNECTED | 256
     GOT_VERSION = REQUESTED_VERSION | 512
-    UNKNOWN = 0
 
 
 class CrawledNode(Model["CrawlDatabase"]):
@@ -153,7 +153,7 @@ class Crawl(Generic[N], Sized):
         raise NotImplementedError()
 
     @abstractmethod
-    def add_state(self, node: N, state: CrawlState):
+    def add_state(self, node: Union[N, CrawledNode], state: CrawlState):
         raise NotImplementedError()
 
     @abstractmethod
@@ -243,11 +243,13 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
         with self.db:
             self.db.hosts.append(host_info)
 
-    def add_state(self, node: N, state: CrawlState):
+    def add_state(self, node: Union[N, CrawledNode], state: CrawlState):
         with self.db:
-            crawled_node = self.get_node(node)
-            crawled_node.state = crawled_node.state | state
-            self.db.nodes.update(crawled_node)
+            if not isinstance(node, CrawledNode):
+                crawled_node = self.get_node(node)
+            if not (crawled_node.state & state):
+                crawled_node.state = crawled_node.state | state
+                self.db.nodes.update(crawled_node)
 
     def __len__(self) -> int:
         return len(self.db.nodes)

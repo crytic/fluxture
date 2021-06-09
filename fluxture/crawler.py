@@ -91,6 +91,7 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                 self.crawl.add_state(node, CrawlState.REQUESTED_NEIGHBORS)
                 for neighbor in await self.blockchain.get_neighbors(node):
                     if neighbor in self.nodes:
+                        # we have already seen this node
                         neighbors.append(self.nodes[neighbor])
                     else:
                         self.nodes[neighbor] = neighbor
@@ -152,6 +153,7 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                 done, pending = await asyncio.wait(waiting_on, return_when=asyncio.FIRST_COMPLETED)
                 futures = list(pending)
                 for result in await asyncio.gather(*done, return_exceptions=True):
+                    # iterate over all of the new neighbors of the node
                     if isinstance(result, StopAsyncIteration) and seed_iter is not None:
                         seed_iter = None
                     elif isinstance(result, Exception):
@@ -170,6 +172,7 @@ class Crawler(Generic[N], metaclass=ABCMeta):
                             # so update its source to be the seed
                             crawled_node.source = result.source
                             self.crawl.update_node(crawled_node)
+                        self.crawl.add_state(crawled_node, CrawlState.DISCOVERED)
                         # Check if we have already encountered this node
                         queue.append(result)
                         num_seeds += 1
