@@ -1,3 +1,4 @@
+import sqlite3
 from abc import abstractmethod
 from ipaddress import IPv4Address, IPv6Address as IPv6AddressPython
 from typing import Callable, FrozenSet, Generic, Optional, Set, Sized, TypeVar, Union
@@ -79,6 +80,19 @@ class CrawledNode(Model["CrawlDatabase"]):
                 (self.rowid,)
             )
         }
+
+    def out_degree(self) -> int:
+        cur = self.db.con.cursor()
+        try:
+            result = cur.execute(
+                "SELECT count(a.*) FROM edges a "
+                "LEFT OUTER JOIN edges b ON a.rowid = b.rowid AND a.timestamp < b.timestamp "
+                "WHERE b.rowid is NULL AND a.from_node = ?",
+                (self.rowid,)
+            )
+            return result.fetchone()[0]
+        finally:
+            cur.close()
 
 
 class Edge(Model):

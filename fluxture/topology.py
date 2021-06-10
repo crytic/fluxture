@@ -416,145 +416,154 @@ class ExportCommand(Command):
 
     def run(self, args):
         with tqdm(desc="exporting", leave=False, unit=" steps", total=8, initial=1) as t:
-            graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE), only_crawled_nodes=args.only_crawled_nodes,
-                                    bidirectional_edges=False)
-            t.update(1)
-            if not args.skip_centrality_analysis:
-                weighted_graph = ProbabilisticWeightedCrawlGraph(graph)
-            t.update(1)
-            if not args.skip_centrality_analysis:
-                weighted_page_rank = weighted_graph.pagerank()
-            t.update(1)
-            if not args.skip_centrality_analysis:
-                weighted_crawled_graph = ProbabilisticWeightedCrawlGraph(
-                    graph.filter(lambda n: n.last_crawled() is not None or n.get_version() is not None)
-                )
-                weighted_crawled_graph_rank = weighted_crawled_graph.pagerank()
-            t.update(1)
-
-            if not args.skip_centrality_analysis:
-                miner_probability = estimate_miner_probability(weighted_graph)
+            with CrawlDatabase(args.CRAWL_DB_FILE) as crawl_db:
+                graph = CrawlGraph.load(crawl_db, only_crawled_nodes=args.only_crawled_nodes,
+                                        bidirectional_edges=False)
                 t.update(1)
-                distances = weighted_graph.probabilistic_shortest_distances()
+                if not args.skip_centrality_analysis:
+                    weighted_graph = ProbabilisticWeightedCrawlGraph(graph)
                 t.update(1)
-                avg_dist_to_miner = expected_average_shortest_distance_to_miner(
-                    crawl_graph=weighted_graph, distances=distances, miner_probability=miner_probability
-                )
+                if not args.skip_centrality_analysis:
+                    weighted_page_rank = weighted_graph.pagerank()
+                t.update(1)
+                if not args.skip_centrality_analysis:
+                    weighted_crawled_graph = ProbabilisticWeightedCrawlGraph(
+                        graph.filter(lambda n: n.last_crawled() is not None or n.get_version() is not None)
+                    )
+                    weighted_crawled_graph_rank = weighted_crawled_graph.pagerank()
                 t.update(1)
 
-            def after_period(obj) -> str:
-                text = str(obj)
-                period_pos = text.find(".")
-                if period_pos > 0:
-                    return text[period_pos + 1:]
-                return text
+                if not args.skip_centrality_analysis:
+                    miner_probability = estimate_miner_probability(weighted_graph)
+                    t.update(1)
+                    distances = weighted_graph.probabilistic_shortest_distances()
+                    t.update(1)
+                    avg_dist_to_miner = expected_average_shortest_distance_to_miner(
+                        crawl_graph=weighted_graph, distances=distances, miner_probability=miner_probability
+                    )
+                    t.update(1)
 
-            if args.format == "arff":
-                cities: Set[str] = {"?"}
-                countries: Set[str] = {"?"}
-                continents: Set[str] = {"?"}
-                versions: Set[str] = {"?"}
-                states: Set[str] = set()
-                for node in graph:
-                    loc = node.get_location()
-                    if loc is not None:
-                        if loc.city is not None:
-                            cities.add(loc.city)
-                        if loc.country_code is not None:
-                            countries.add(loc.country_code)
-                        if loc.continent_code is not None:
-                            continents.add(loc.continent_code)
-                    version = node.get_version()
-                    if version is not None:
-                        versions.add(repr(version.version))
-                    states.add(after_period(node.state))
-                print(f"""% Fluxture crawl
-    % Source: {args.CRAWL_DB_FILE}
-    
-    @RELATION topology
-    
-    @ATTRIBUTE ip                     STRING
-    @ATTRIBUTE continent              {{{','.join(map(repr, continents))}}}
-    @ATTRIBUTE country                {{{','.join(map(repr, countries))}}}
-    @ATTRIBUTE city                   {{{','.join(map(repr, cities))}}}
-    @ATTRIBUTE connected              {{TRUE, FALSE}}
-    @ATTRIBUTE state                  {{{','.join(map(repr, states))}}}
-    @ATTRIBUTE version                {{{','.join(versions)}}}
-    @ATTRIBUTE out_degree             NUMERIC
-    @ATTRIBUTE in_degree              NUMERIC
-    @ATTRIBUTE mutual_neighbors       NUMERIC
-    @ATTRIBUTE centrality             NUMERIC
-    @ATTRIBUTE miner_probability      NUMERIC
-    @ATTRIBUTE avg_shortest_dist      NUMERIC
-    @ATTRIBUTE expected_dist_to_miner NUMERIC
-    @ATTRIBUTE crawled_out_degree     NUMERIC
-    @ATTRIBUTE crawled_in_degree      NUMERIC
-    @ATTRIBUTE crawled_centrality     NUMERIC
-    
-    @DATA
-    """)
-            else:
-                # Assume CSV format
-                print("ip,continent,country,city,connected,state,version,out_degree,in_degree,mutual_neighbors,"
-                      "centrality,miner_probability,avg_shortest_dist,expected_dist_to_miner,crawled_out_degree,"
-                      "crawled_in_degree,crawled_centrality")
-            for node in tqdm(graph, desc="writing", unit=" nodes", leave=False):
-                loc = node.get_location()
-                if loc is None:
-                    city = "?"
-                    country = "?"
-                    continent = "?"
+                def after_period(obj) -> str:
+                    text = str(obj)
+                    period_pos = text.find(".")
+                    if period_pos > 0:
+                        return text[period_pos + 1:]
+                    return text
+
+                if args.format == "arff":
+                    cities: Set[str] = {"?"}
+                    countries: Set[str] = {"?"}
+                    continents: Set[str] = {"?"}
+                    versions: Set[str] = {"?"}
+                    states: Set[str] = set()
+                    for node in graph:
+                        loc = node.get_location()
+                        if loc is not None:
+                            if loc.city is not None:
+                                cities.add(loc.city)
+                            if loc.country_code is not None:
+                                countries.add(loc.country_code)
+                            if loc.continent_code is not None:
+                                continents.add(loc.continent_code)
+                        version = node.get_version()
+                        if version is not None:
+                            versions.add(repr(version.version))
+                        states.add(after_period(node.state))
+                    print(f"""% Fluxture crawl
+% Source: {args.CRAWL_DB_FILE}
+        
+@RELATION topology
+        
+@ATTRIBUTE ip                     STRING
+@ATTRIBUTE continent              {{{','.join(map(repr, continents))}}}
+@ATTRIBUTE country                {{{','.join(map(repr, countries))}}}
+@ATTRIBUTE city                   {{{','.join(map(repr, cities))}}}
+@ATTRIBUTE connected              {{TRUE, FALSE}}
+@ATTRIBUTE state                  {{{','.join(map(repr, states))}}}
+@ATTRIBUTE version                {{{','.join(versions)}}}
+@ATTRIBUTE out_degree             NUMERIC
+@ATTRIBUTE in_degree              NUMERIC
+@ATTRIBUTE mutual_neighbors       NUMERIC
+@ATTRIBUTE centrality             NUMERIC
+@ATTRIBUTE miner_probability      NUMERIC
+@ATTRIBUTE avg_shortest_dist      NUMERIC
+@ATTRIBUTE expected_dist_to_miner NUMERIC
+@ATTRIBUTE crawled_out_degree     NUMERIC
+@ATTRIBUTE crawled_in_degree      NUMERIC
+@ATTRIBUTE crawled_centrality     NUMERIC
+        
+@DATA
+""")
                 else:
-                    if loc.city is None or loc.city == "None":
+                    # Assume CSV format
+                    print("ip,continent,country,city,connected,state,version,out_degree,in_degree,mutual_neighbors,"
+                          "centrality,miner_probability,avg_shortest_dist,expected_dist_to_miner,crawled_out_degree,"
+                          "crawled_in_degree,crawled_centrality")
+                for node in tqdm(graph, desc="writing", unit=" nodes", leave=False):
+                    loc = node.get_location()
+                    if loc is None:
                         city = "?"
-                    else:
-                        city = loc.city
-                    if loc.country_code is None:
                         country = "?"
-                    else:
-                        country = loc.country_code
-                    if loc.continent_code is None:
                         continent = "?"
                     else:
-                        continent = loc.continent_code
-                    if args.format == "arff":
-                        city = repr(city)
-                        country = repr(country)
-                        continent = repr(continent)
-                version = node.get_version()
-                if version is None:
-                    version_str = "?"
-                else:
-                    version_str = version.version
-                    if args.format == "arff":
-                        version_str = repr(version_str)
-                if not args.skip_centrality_analysis:
-                    if node in weighted_crawled_graph_rank:
-                        weighted_rank = str(weighted_crawled_graph_rank[node])
+                        if loc.city is None or loc.city == "None":
+                            city = "?"
+                        else:
+                            city = loc.city
+                        if loc.country_code is None:
+                            country = "?"
+                        else:
+                            country = loc.country_code
+                        if loc.continent_code is None:
+                            continent = "?"
+                        else:
+                            continent = loc.continent_code
+                        if args.format == "arff":
+                            city = repr(city)
+                            country = repr(country)
+                            continent = repr(continent)
+                    version = node.get_version()
+                    if version is None:
+                        version_str = "?"
+                    else:
+                        version_str = version.version
+                        if args.format == "arff":
+                            version_str = repr(version_str)
+                    if not args.skip_centrality_analysis:
+                        if node in weighted_crawled_graph_rank:
+                            weighted_rank = str(weighted_crawled_graph_rank[node])
+                        else:
+                            weighted_rank = ""
+                        base_weighted_rank = str(weighted_page_rank[node])
+                        miner_prob = str(miner_probability[node])
+                        avg_shortest_distance = str(
+                            sum(distances[weighted_graph.node_indexes[node]])/len(weighted_graph)
+                        )
+                        adtm = str(avg_dist_to_miner[node])
+                        weighted_out_degree = str(weighted_crawled_graph.out_degree[node])
+                        weighted_in_degree = str(weighted_crawled_graph.in_degree[node])
                     else:
                         weighted_rank = ""
-                    base_weighted_rank = str(weighted_page_rank[node])
-                    miner_prob = str(miner_probability[node])
-                    avg_shortest_distance = str(sum(distances[weighted_graph.node_indexes[node]])/len(weighted_graph))
-                    adtm = str(avg_dist_to_miner[node])
-                    weighted_out_degree = str(weighted_crawled_graph.out_degree[node])
-                    weighted_in_degree = str(weighted_crawled_graph.in_degree[node])
-                else:
-                    weighted_rank = ""
-                    base_weighted_rank = ""
-                    miner_prob = ""
-                    avg_shortest_distance = ""
-                    adtm = ""
-                    weighted_out_degree = ""
-                    weighted_in_degree = ""
+                        base_weighted_rank = ""
+                        miner_prob = ""
+                        avg_shortest_distance = ""
+                        adtm = ""
+                        weighted_out_degree = ""
+                        weighted_in_degree = ""
+                    if args.only_crawled_nodes:
+                        out_degree = len(node.get_latest_edges())
+                    else:
+                        out_degree = graph.out_degree[node]
 
-                num_mutual_neighbors = sum(1 for neighbor in graph.neighbors(node) if graph.has_edge(neighbor, node))
-                print(f"{node.ip!s},{continent},{country},{city},{['TRUE', 'FALSE'][node.last_crawled() is None]},"
-                      f"{repr(after_period(node.state))},"
-                      f"{version_str},{graph.out_degree[node]},{graph.in_degree[node]},{num_mutual_neighbors},"
-                      f"{base_weighted_rank},{miner_prob},{avg_shortest_distance},{adtm},{weighted_out_degree},"
-                      f"{weighted_in_degree},{weighted_rank}")
-            t.update(1)
+                    num_mutual_neighbors = sum(
+                        1 for neighbor in graph.neighbors(node) if graph.has_edge(neighbor, node)
+                    )
+                    print(f"{node.ip!s},{continent},{country},{city},{['TRUE', 'FALSE'][node.last_crawled() is None]},"
+                          f"{repr(after_period(node.state))},"
+                          f"{version_str},{out_degree},{graph.in_degree[node]},{num_mutual_neighbors},"
+                          f"{base_weighted_rank},{miner_prob},{avg_shortest_distance},{adtm},{weighted_out_degree},"
+                          f"{weighted_in_degree},{weighted_rank}")
+                t.update(1)
 
 
 def kl_divergence(dist1: Iterable[float], dist2: Iterable[float]) -> float:
