@@ -410,30 +410,37 @@ class ExportCommand(Command):
         parser.add_argument("CRAWL_DB_FILE", type=str, help="path to the crawl database")
         parser.add_argument("--format", "-f", choices=["arff", "csv"], default="arff", help="the format in which to "
                                                                                             "export the data")
+        parser.add_argument("--skip-centrality-analysis", action="store_true", help="skip the slow centrality analysis")
+        parser.add_argument("--only-crawled-nodes", action="store_true", help="only export nodes to which a successful "
+                                                                              "connection was established")
 
     def run(self, args):
         with tqdm(desc="exporting", leave=False, unit=" steps", total=8, initial=1) as t:
-            graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE), only_crawled_nodes=False,
+            graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE), only_crawled_nodes=args.only_crawled_nodes,
                                     bidirectional_edges=False)
             t.update(1)
-            weighted_graph = ProbabilisticWeightedCrawlGraph(graph)
+            if not args.skip_centrality_analysis:
+                weighted_graph = ProbabilisticWeightedCrawlGraph(graph)
             t.update(1)
-            weighted_page_rank = weighted_graph.pagerank()
+            if not args.skip_centrality_analysis:
+                weighted_page_rank = weighted_graph.pagerank()
             t.update(1)
-            weighted_crawled_graph = ProbabilisticWeightedCrawlGraph(
-                graph.filter(lambda n: n.last_crawled() is not None or n.get_version() is not None)
-            )
-            weighted_crawled_graph_rank = weighted_crawled_graph.pagerank()
+            if not args.skip_centrality_analysis:
+                weighted_crawled_graph = ProbabilisticWeightedCrawlGraph(
+                    graph.filter(lambda n: n.last_crawled() is not None or n.get_version() is not None)
+                )
+                weighted_crawled_graph_rank = weighted_crawled_graph.pagerank()
             t.update(1)
 
-            miner_probability = estimate_miner_probability(weighted_graph)
-            t.update(1)
-            distances = weighted_graph.probabilistic_shortest_distances()
-            t.update(1)
-            avg_dist_to_miner = expected_average_shortest_distance_to_miner(
-                crawl_graph=weighted_graph, distances=distances, miner_probability=miner_probability
-            )
-            t.update(1)
+            if not args.skip_centrality_analysis:
+                miner_probability = estimate_miner_probability(weighted_graph)
+                t.update(1)
+                distances = weighted_graph.probabilistic_shortest_distances()
+                t.update(1)
+                avg_dist_to_miner = expected_average_shortest_distance_to_miner(
+                    crawl_graph=weighted_graph, distances=distances, miner_probability=miner_probability
+                )
+                t.update(1)
 
             def after_period(obj) -> str:
                 text = str(obj)
@@ -521,18 +528,32 @@ class ExportCommand(Command):
                     version_str = version.version
                     if args.format == "arff":
                         version_str = repr(version_str)
-                if node in weighted_crawled_graph_rank:
-                    weighted_rank = str(weighted_crawled_graph_rank[node])
+                if not args.skip_centrality_analysis:
+                    if node in weighted_crawled_graph_rank:
+                        weighted_rank = str(weighted_crawled_graph_rank[node])
+                    else:
+                        weighted_rank = ""
+                    base_weighted_rank = str(weighted_page_rank[node])
+                    miner_prob = str(miner_probability[node])
+                    avg_shortest_distance = str(sum(distances[weighted_graph.node_indexes[node]])/len(weighted_graph))
+                    adtm = str(avg_dist_to_miner[node])
+                    weighted_out_degree = str(weighted_crawled_graph.out_degree[node])
+                    weighted_in_degree = str(weighted_crawled_graph.in_degree[node])
                 else:
                     weighted_rank = ""
+                    base_weighted_rank = ""
+                    miner_prob = ""
+                    avg_shortest_distance = ""
+                    adtm = ""
+                    weighted_out_degree = ""
+                    weighted_in_degree = ""
+
                 num_mutual_neighbors = sum(1 for neighbor in graph.neighbors(node) if graph.has_edge(neighbor, node))
                 print(f"{node.ip!s},{continent},{country},{city},{['TRUE', 'FALSE'][node.last_crawled() is None]},"
                       f"{repr(after_period(node.state))},"
                       f"{version_str},{graph.out_degree[node]},{graph.in_degree[node]},{num_mutual_neighbors},"
-                      f"{weighted_page_rank[node]},{miner_probability[node]},"
-                      f"{sum(distances[weighted_graph.node_indexes[node]])/len(weighted_graph)},"
-                      f"{avg_dist_to_miner[node]},{weighted_crawled_graph.out_degree[node]},"
-                      f"{weighted_crawled_graph.in_degree[node]},{weighted_rank}")
+                      f"{base_weighted_rank},{miner_prob},{avg_shortest_distance},{adtm},{weighted_out_degree},"
+                      f"{weighted_in_degree},{weighted_rank}")
             t.update(1)
 
 
