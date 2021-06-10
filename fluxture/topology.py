@@ -604,7 +604,7 @@ class NodeRemoval(Command):
         )
         tqdm.write("country,centrality change,distance to miner change", file=sys.stdout)
         for country_to_remove, nodes_to_remove in nodes_by_country.items():
-            # Calculate the change in centrality1
+            # Calculate the change in centrality
             centrality_before = [weighted_page_rank[n] for n in ordered_nodes if n not in nodes_to_remove]
             modified_graph = graph.filter(lambda n: n not in nodes_to_remove)
             modified_weighted_graph = ProbabilisticWeightedCrawlGraph(modified_graph)
