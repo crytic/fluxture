@@ -1,6 +1,7 @@
 import argparse
 import logging
 from typing import Union
+import sys
 
 from .fluxture import add_command_subparsers
 
@@ -22,7 +23,11 @@ def main():
 
     add_command_subparsers(parser)
 
-    args = parser.parse_args()
+    try:
+        args = parser.parse_args()
+    except argparse.ArgumentTypeError as e:
+        sys.stderr.write(str(e))
+        return 1
 
     if args.debug:
         setLevel(logging.DEBUG)
