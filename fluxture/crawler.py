@@ -313,7 +313,7 @@ class GeolocateCommand(Command):
             added = 0
             updated = 0
             with tqdm(db.nodes, leave=False, desc="geolocating", unit=" nodes") as t:
-                for node in t:
+                for i, node in enumerate(t):
                     old_location = node.get_location()
                     was_none = old_location is None
                     if not args.process_all and not was_none:
@@ -341,7 +341,9 @@ class GeolocateCommand(Command):
                             updated += 1
                         else:
                             continue
-                        t.desc = f"geolocating ({added} added, {updated} updated)"
+                        if i % 50 == 0:
+                            # To save I/O cycles, only print an update every 50 nodes
+                            t.desc = f"geolocating ({added} added, {updated} updated)"
             print(f"Added {added} new locations and updated {updated} existing ones")
 
 
