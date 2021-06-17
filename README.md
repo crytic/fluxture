@@ -45,6 +45,18 @@ A KML file (which can be imported to Google Maps or Google Earth) can be generat
 fluxture kml --group-by ip crawl.db output.kml
 ```
 
+The geolocation database can be updated from MaxMind by running:
+
+```commandline
+fluxture update-geo-db
+```
+
+An existing crawl database can be re-analyzed for missing or updated geolocations (_e.g._, from an updated MaxMind database) by running:
+
+```commandline
+fluxture geolocate crawl.db
+```
+
 ## Topological Analysis
 
 Fluxture can calculate topological statistics about the centrality of a crawled network by running:
