@@ -65,6 +65,27 @@ Fluxture can calculate topological statistics about the centrality of a crawled 
 fluxture topology crawl.db
 ```
 
+## Programmatic Interface
+
+```python
+from fluxture.crawl_schema import CrawlDatabase
+
+with CrawlDatabase("crawl.db") as db:
+    for node in db.nodes:
+        print(f"Node {node.ip}:{node.port} {node.state!s}")
+        location = node.get_location()
+        if location is not None:
+            print(f"\tLocation:\t{location.continent_code}\t{location.country_code}\t{location.city}")
+        else:
+            print("\tLocation:\t?")
+        version = node.get_version()
+        if version is not None:
+            print(f"\tVersion:\t{version.version!s}")
+        else:
+            print("\tVersion:\t?")
+        print(f"\tOut-Edges:\t{', '.join(str(neighbor.ip) for neighbor in node.get_latest_edges())}")
+```
+
 ## License and Acknowledgements
 
 This research was developed by [Trail of Bits](https://www.trailofbits.com/) based upon work supported by DARPA under
