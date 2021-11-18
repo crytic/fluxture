@@ -385,6 +385,7 @@ class CrawlCommand(Command):
                         if choice.lower() == "y" or len(choice.strip()) == 0:
                             resource.setrlimit(resource.RLIMIT_NOFILE, (32768, resource.RLIM_INFINITY))
                             max_file_handles, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
+                            break
                         elif choice.lower() == "n":
                             break
             max_connections = max(max_file_handles // 3 * 2, 1)
