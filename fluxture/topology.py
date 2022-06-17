@@ -1,11 +1,11 @@
 import sys
 from argparse import ArgumentParser
-from collections import defaultdict, OrderedDict
+from collections import OrderedDict, defaultdict
 from pathlib import Path
-from typing import (
-    Callable, Dict, FrozenSet, Generic, Hashable, Iterable, List, Optional, OrderedDict as OrderedDictType, Set,
-    TypeVar, Union
-)
+from typing import (Callable, Dict, FrozenSet, Generic, Hashable, Iterable,
+                    List, Optional)
+from typing import OrderedDict as OrderedDictType
+from typing import Set, TypeVar, Union
 
 import graphviz
 import networkx as nx
@@ -16,7 +16,6 @@ from .crawl_schema import CrawledNode, Version
 from .crawler import CrawlDatabase
 from .fluxture import Command
 from .statistics import Statistics
-
 
 N = TypeVar("N", bound=Hashable)
 
@@ -39,14 +38,18 @@ class NodeGroup(frozenset, Generic[N], FrozenSet[N]):
 class CrawlGraph(nx.DiGraph, Generic[N]):
     @staticmethod
     def load(
-            db: CrawlDatabase, only_crawled_nodes: bool = False, bidirectional_edges: bool = True
+        db: CrawlDatabase,
+        only_crawled_nodes: bool = False,
+        bidirectional_edges: bool = True,
     ) -> "CrawlGraph[CrawledNode]":
         graph = CrawlGraph()
         if only_crawled_nodes:
             nodes = set(db.crawled_nodes)
         else:
             nodes = db.nodes
-        for node in tqdm(nodes, leave=False, desc="Constructing Topology", unit=" nodes"):
+        for node in tqdm(
+            nodes, leave=False, desc="Constructing Topology", unit=" nodes"
+        ):
             graph.add_node(node)
             for to_node in node.get_latest_edges():
                 if only_crawled_nodes and to_node not in nodes:
@@ -57,10 +60,10 @@ class CrawlGraph(nx.DiGraph, Generic[N]):
         return graph
 
     def to_dot(
-            self,
-            comment: Optional[str] = None,
-            labeler: Optional[Callable[[N], str]] = None,
-            node_filter: Optional[Callable[[N], bool]] = None
+        self,
+        comment: Optional[str] = None,
+        labeler: Optional[Callable[[N], str]] = None,
+        node_filter: Optional[Callable[[N], bool]] = None,
     ) -> graphviz.Digraph:
         if comment is not None:
             dot = graphviz.Digraph(comment=comment)
@@ -88,17 +91,19 @@ class CrawlGraph(nx.DiGraph, Generic[N]):
         # remove all nodes that are in strongly connected components by themselves
         to_remove = set()
         for connected_component in tqdm(
-                nx.strongly_connected_components(self),
-                leave=False,
-                desc="Pruning trivial connected components ",
-                unit=" components"
+            nx.strongly_connected_components(self),
+            leave=False,
+            desc="Pruning trivial connected components ",
+            unit=" components",
         ):
             if len(connected_component) <= 2:
                 to_remove |= connected_component
         self.remove_nodes_from(to_remove)
 
     def pagerank(self) -> OrderedDictType[N, float]:
-        return OrderedDict(sorted(nx.pagerank(self).items(), key=lambda item: item[1], reverse=True))
+        return OrderedDict(
+            sorted(nx.pagerank(self).items(), key=lambda item: item[1], reverse=True)
+        )
 
     def group_by(self, grouper: Callable[[N], str]) -> "GroupedCrawlGraph[N]":
         groups_by_node: Dict[N, str] = {node: grouper(node) for node in self}
@@ -158,6 +163,7 @@ class ProbabilisticWeightedCrawlGraph(Generic[N]):
     complete graphs, so we need to use numpy directly.
 
     """
+
     def __init__(self, parent: CrawlGraph[N], max_neighbor_percent: float = 0.23):
         """
         Converts the parent crawl graph to a weighted graph where weights correspond to the probability of an edge.
@@ -189,8 +195,13 @@ class ProbabilisticWeightedCrawlGraph(Generic[N]):
             self.expected_actual_degrees[node] = expected_actual_degree
         self.expected_total_edges: float = sum(self.expected_actual_degrees.values())
         # now add the probabilistic edges
-        for node, row in tqdm(self.node_indexes.items(), leave=False, desc="building probabilistic graph",
-                              unit=" nodes", total=len(self.nodes)):
+        for node, row in tqdm(
+            self.node_indexes.items(),
+            leave=False,
+            desc="building probabilistic graph",
+            unit=" nodes",
+            total=len(self.nodes),
+        ):
             existing_edges = parent.out_degree[node]
             if existing_edges == 0:
                 # this means we didn't crawl node yet, so assume the edges are bidirectional:
@@ -224,8 +235,16 @@ class ProbabilisticWeightedCrawlGraph(Generic[N]):
         np.fill_diagonal(prior_probabilities, 1.0)
         first_residuals: Optional[float] = None
         last_residuals: Optional[float] = None
-        for i in trange(2, len(self), desc="probabilistic shortest path", unit=" distances", leave=False):
-            with tqdm(desc="iteration", total=6, unit=" steps", leave=False, initial=1) as t:
+        for i in trange(
+            2,
+            len(self),
+            desc="probabilistic shortest path",
+            unit=" distances",
+            leave=False,
+        ):
+            with tqdm(
+                desc="iteration", total=6, unit=" steps", leave=False, initial=1
+            ) as t:
                 adj = adj @ self.adjacency
                 t.update(1)
                 adj = adj.clip(min=0.0, max=1.0, out=adj)
@@ -241,11 +260,15 @@ class ProbabilisticWeightedCrawlGraph(Generic[N]):
                     last_residuals = first_residuals
                 elif last_residuals is not None:
                     if residuals > last_residuals:
-                        t.write("Warning: Residuals are not converging!", file=sys.stderr)
+                        t.write(
+                            "Warning: Residuals are not converging!", file=sys.stderr
+                        )
                     else:
                         last_residuals = residuals  # type: ignore
                         if first_residuals > 0:
-                            convergence_percent = (1.0 - (last_residuals / first_residuals)) * 100.0
+                            convergence_percent = (
+                                1.0 - (last_residuals / first_residuals)
+                            ) * 100.0
                             t.desc = f"prob. shortest path ({convergence_percent:.2f}% converged)"
                 t.update(1)
                 # tqdm.write(f"Residuals: {residuals}\n", file=sys.stderr)
@@ -254,7 +277,9 @@ class ProbabilisticWeightedCrawlGraph(Generic[N]):
                 prior_probabilities += additions
         return results
 
-    def pagerank(self, alpha: float = 0.85, max_iterations: int = 100, tolerance: float = 1.0e-6) -> Dict[N, float]:
+    def pagerank(
+        self, alpha: float = 0.85, max_iterations: int = 100, tolerance: float = 1.0e-6
+    ) -> Dict[N, float]:
         # use power iteration because calculating the Eigenvectors is too slow for large matrices
 
         with tqdm(desc="calculating stationary distributon", total=2, leave=False) as t:
@@ -264,14 +289,20 @@ class ProbabilisticWeightedCrawlGraph(Generic[N]):
             initial_weight = 1.0 / n
             pi = np.full((n,), initial_weight)
 
-            with tqdm(desc="normalizing adjacency matrix", total=1, initial=1, leave=False):
+            with tqdm(
+                desc="normalizing adjacency matrix", total=1, initial=1, leave=False
+            ):
                 # take the L1 norm of the adjancency matrix
                 # so all rows sum to 1
-                normalized_adj = self.adjacency / np.linalg.norm(self.adjacency, ord=1, axis=1)
+                normalized_adj = self.adjacency / np.linalg.norm(
+                    self.adjacency, ord=1, axis=1
+                )
 
             t.update(1)
 
-            with tqdm(max_iterations, desc="power iteration", leave=False, unit=" error") as r:
+            with tqdm(
+                max_iterations, desc="power iteration", leave=False, unit=" error"
+            ) as r:
                 last_diff: Optional[float] = None
                 for iteration in range(max_iterations):
                     r.desc = f"power iteration {iteration + 1}"
@@ -300,7 +331,9 @@ class ProbabilisticWeightedCrawlGraph(Generic[N]):
                         # we are done!
                         break
                 else:
-                    raise ValueError(f"Power iteration failed to converge in {max_iterations} iterations")
+                    raise ValueError(
+                        f"Power iteration failed to converge in {max_iterations} iterations"
+                    )
 
             t.update(1)
 
@@ -317,7 +350,9 @@ class GroupedCrawlGraph(CrawlGraph[NodeGroup[N]], Generic[N]):
         ranks = {
             group: sum(parent_ranks[node] for node in group) for group in self.nodes
         }
-        return OrderedDict(sorted(ranks.items(), key=lambda item: item[1], reverse=True))
+        return OrderedDict(
+            sorted(ranks.items(), key=lambda item: item[1], reverse=True)
+        )
 
 
 # From: https://cbeci.org/mining_map
@@ -331,13 +366,13 @@ AVERAGE_SHARE_OF_HASHRATE = {
     "CA": 0.0082,
     "DE": 0.0056,
     "NO": 0.0048,
-    "VE": 0.0042
+    "VE": 0.0042,
 }
 
 
 def estimate_miner_probability(
-        nodes: Iterable[CrawledNode],
-        hashrates_by_country: Optional[Dict[str, float]] = None
+    nodes: Iterable[CrawledNode],
+    hashrates_by_country: Optional[Dict[str, float]] = None,
 ) -> Dict[N, float]:
     """Calculates the probability of each node being a miner based upon the global distribution of miners"""
     if hashrates_by_country is None:
@@ -348,7 +383,13 @@ def estimate_miner_probability(
     hashrate_remainder = 1.0 - hashrate_sum
     nodes_by_country: Dict[str, List[CrawledNode]] = defaultdict(list)
     nodes_not_in_mapping = 0
-    with tqdm(desc="estimating miner distribution", total=2, initial=1, leave=False, unit=" steps") as t:
+    with tqdm(
+        desc="estimating miner distribution",
+        total=2,
+        initial=1,
+        leave=False,
+        unit=" steps",
+    ) as t:
         for node in tqdm(nodes, desc="geolocating", leave=False, unit=" nodes"):
             loc = node.get_location()
             if loc is None or loc.country_code is None:
@@ -361,10 +402,10 @@ def estimate_miner_probability(
         t.update(1)
         ret: Dict[CrawledNode, float] = {}
         for country_code, nodes_in_country in tqdm(
-                nodes_by_country.items(),
-                desc="extrapolating hashrate",
-                leave=False,
-                unit=" countries"
+            nodes_by_country.items(),
+            desc="extrapolating hashrate",
+            leave=False,
+            unit=" countries",
         ):
             if not nodes_in_country:
                 # there are no nodes in this country (this should never happen)
@@ -381,9 +422,11 @@ def estimate_miner_probability(
 
 
 def expected_average_shortest_distance_to_miner(
-        crawl_graph: Union[ProbabilisticWeightedCrawlGraph[CrawledNode], CrawlGraph[CrawledNode]],
-        distances: Optional[np.ndarray] = None,
-        miner_probability: Optional[Dict[CrawledNode, float]] = None
+    crawl_graph: Union[
+        ProbabilisticWeightedCrawlGraph[CrawledNode], CrawlGraph[CrawledNode]
+    ],
+    distances: Optional[np.ndarray] = None,
+    miner_probability: Optional[Dict[CrawledNode, float]] = None,
 ) -> Dict[CrawledNode, float]:
     """Estimates the average shortest distance to a miner for each node in the graph"""
     if not isinstance(crawl_graph, ProbabilisticWeightedCrawlGraph):
@@ -392,13 +435,26 @@ def expected_average_shortest_distance_to_miner(
         miner_probability = estimate_miner_probability(crawl_graph)
     if distances is None:
         distances = crawl_graph.probabilistic_shortest_distances()
-    elif distances.ndim != 2 or distances.shape[0] != len(crawl_graph) or distances.shape[1] != len(crawl_graph):
-        raise ValueError(f"distances is expected to be an {len(crawl_graph)}x{len(crawl_graph)} matrix")
+    elif (
+        distances.ndim != 2
+        or distances.shape[0] != len(crawl_graph)
+        or distances.shape[1] != len(crawl_graph)
+    ):
+        raise ValueError(
+            f"distances is expected to be an {len(crawl_graph)}x{len(crawl_graph)} matrix"
+        )
     return {
-        node: sum(distances[index][i] * miner_probability[crawl_graph.nodes[i]] for i in range(len(crawl_graph)))
-        for node, index in tqdm((
-            (n, crawl_graph.node_indexes[n]) for n in crawl_graph
-        ), desc="calculating expected distance to miners", leave=False, unit=" nodes", total=len(crawl_graph))
+        node: sum(
+            distances[index][i] * miner_probability[crawl_graph.nodes[i]]
+            for i in range(len(crawl_graph))
+        )
+        for node, index in tqdm(
+            ((n, crawl_graph.node_indexes[n]) for n in crawl_graph),
+            desc="calculating expected distance to miners",
+            leave=False,
+            unit=" nodes",
+            total=len(crawl_graph),
+        )
     }
 
 
@@ -407,18 +463,38 @@ class ExportCommand(Command):
     help = "export the crawl data"
 
     def __init_arguments__(self, parser: ArgumentParser):
-        parser.add_argument("CRAWL_DB_FILE", type=str, help="path to the crawl database")
-        parser.add_argument("--format", "-f", choices=["arff", "csv"], default="arff", help="the format in which to "
-                                                                                            "export the data")
-        parser.add_argument("--skip-centrality-analysis", action="store_true", help="skip the slow centrality analysis")
-        parser.add_argument("--only-crawled-nodes", action="store_true", help="only export nodes to which a successful "
-                                                                              "connection was established")
+        parser.add_argument(
+            "CRAWL_DB_FILE", type=str, help="path to the crawl database"
+        )
+        parser.add_argument(
+            "--format",
+            "-f",
+            choices=["arff", "csv"],
+            default="arff",
+            help="the format in which to " "export the data",
+        )
+        parser.add_argument(
+            "--skip-centrality-analysis",
+            action="store_true",
+            help="skip the slow centrality analysis",
+        )
+        parser.add_argument(
+            "--only-crawled-nodes",
+            action="store_true",
+            help="only export nodes to which a successful "
+            "connection was established",
+        )
 
     def run(self, args):
-        with tqdm(desc="exporting", leave=False, unit=" steps", total=8, initial=1) as t:
+        with tqdm(
+            desc="exporting", leave=False, unit=" steps", total=8, initial=1
+        ) as t:
             with CrawlDatabase(args.CRAWL_DB_FILE) as crawl_db:
-                graph = CrawlGraph.load(crawl_db, only_crawled_nodes=args.only_crawled_nodes,
-                                        bidirectional_edges=False)
+                graph = CrawlGraph.load(
+                    crawl_db,
+                    only_crawled_nodes=args.only_crawled_nodes,
+                    bidirectional_edges=False,
+                )
                 t.update(1)
                 if not args.skip_centrality_analysis:
                     weighted_graph = ProbabilisticWeightedCrawlGraph(graph)
@@ -428,7 +504,10 @@ class ExportCommand(Command):
                 t.update(1)
                 if not args.skip_centrality_analysis:
                     weighted_crawled_graph = ProbabilisticWeightedCrawlGraph(
-                        graph.filter(lambda n: n.last_crawled() is not None or n.get_version() is not None)
+                        graph.filter(
+                            lambda n: n.last_crawled() is not None
+                            or n.get_version() is not None
+                        )
                     )
                     weighted_crawled_graph_rank = weighted_crawled_graph.pagerank()
                 t.update(1)
@@ -439,7 +518,9 @@ class ExportCommand(Command):
                     distances = weighted_graph.probabilistic_shortest_distances()
                     t.update(1)
                     avg_dist_to_miner = expected_average_shortest_distance_to_miner(
-                        crawl_graph=weighted_graph, distances=distances, miner_probability=miner_probability
+                        crawl_graph=weighted_graph,
+                        distances=distances,
+                        miner_probability=miner_probability,
                     )
                     t.update(1)
 
@@ -447,7 +528,7 @@ class ExportCommand(Command):
                     text = str(obj)
                     period_pos = text.find(".")
                     if period_pos > 0:
-                        return text[period_pos + 1:]
+                        return text[period_pos + 1 :]
                     return text
 
                 if args.format == "arff":
@@ -469,7 +550,8 @@ class ExportCommand(Command):
                         if version is not None:
                             versions.add(repr(version.version))
                         states.add(after_period(node.state))
-                    print(f"""% Fluxture crawl
+                    print(
+                        f"""% Fluxture crawl
 % Source: {args.CRAWL_DB_FILE}
         
 @RELATION topology
@@ -493,12 +575,15 @@ class ExportCommand(Command):
 @ATTRIBUTE crawled_centrality     NUMERIC
         
 @DATA
-""")
+"""
+                    )
                 else:
                     # Assume CSV format
-                    print("ip,continent,country,city,connected,state,version,out_degree,in_degree,mutual_neighbors,"
-                          "centrality,miner_probability,avg_shortest_dist,expected_dist_to_miner,crawled_out_degree,"
-                          "crawled_in_degree,crawled_centrality")
+                    print(
+                        "ip,continent,country,city,connected,state,version,out_degree,in_degree,mutual_neighbors,"
+                        "centrality,miner_probability,avg_shortest_dist,expected_dist_to_miner,crawled_out_degree,"
+                        "crawled_in_degree,crawled_centrality"
+                    )
                 for node in tqdm(graph, desc="writing", unit=" nodes", leave=False):
                     loc = node.get_location()
                     if loc is None:
@@ -537,10 +622,13 @@ class ExportCommand(Command):
                         base_weighted_rank = str(weighted_page_rank[node])
                         miner_prob = str(miner_probability[node])
                         avg_shortest_distance = str(
-                            sum(distances[weighted_graph.node_indexes[node]])/len(weighted_graph)
+                            sum(distances[weighted_graph.node_indexes[node]])
+                            / len(weighted_graph)
                         )
                         adtm = str(avg_dist_to_miner[node])
-                        weighted_out_degree = str(weighted_crawled_graph.out_degree[node])
+                        weighted_out_degree = str(
+                            weighted_crawled_graph.out_degree[node]
+                        )
                         weighted_in_degree = str(weighted_crawled_graph.in_degree[node])
                     else:
                         weighted_rank = ""
@@ -556,13 +644,17 @@ class ExportCommand(Command):
                         out_degree = graph.out_degree[node]
 
                     num_mutual_neighbors = sum(
-                        1 for neighbor in graph.neighbors(node) if graph.has_edge(neighbor, node)
+                        1
+                        for neighbor in graph.neighbors(node)
+                        if graph.has_edge(neighbor, node)
                     )
-                    print(f"{node.ip!s},{continent},{country},{city},{['TRUE', 'FALSE'][node.last_crawled() is None]},"
-                          f"{repr(after_period(node.state))},"
-                          f"{version_str},{out_degree},{graph.in_degree[node]},{num_mutual_neighbors},"
-                          f"{base_weighted_rank},{miner_prob},{avg_shortest_distance},{adtm},{weighted_out_degree},"
-                          f"{weighted_in_degree},{weighted_rank}")
+                    print(
+                        f"{node.ip!s},{continent},{country},{city},{['TRUE', 'FALSE'][node.last_crawled() is None]},"
+                        f"{repr(after_period(node.state))},"
+                        f"{version_str},{out_degree},{graph.in_degree[node]},{num_mutual_neighbors},"
+                        f"{base_weighted_rank},{miner_prob},{avg_shortest_distance},{adtm},{weighted_out_degree},"
+                        f"{weighted_in_degree},{weighted_rank}"
+                    )
                 t.update(1)
 
 
@@ -586,8 +678,9 @@ class UnreachableNodes(Command):
     help = "reports statistics on nodes that were reported as neighbors by nodes we crawled but were unreachable"
 
     def __init_arguments__(self, parser: ArgumentParser):
-        parser.add_argument("CRAWL_DB_FILE", type=str,
-                            help="path to the crawl database")
+        parser.add_argument(
+            "CRAWL_DB_FILE", type=str, help="path to the crawl database"
+        )
 
     def run(self, args):
         with CrawlDatabase(args.CRAWL_DB_FILE) as db:
@@ -599,21 +692,30 @@ class UnreachableNodes(Command):
             for node in crawled_nodes:
                 neighbors = node.get_latest_edges()
                 num_out_edges += len(neighbors)
-                num_crawled_out_edges += sum(1 for neighbor in neighbors if neighbor in crawled_nodes)
+                num_crawled_out_edges += sum(
+                    1 for neighbor in neighbors if neighbor in crawled_nodes
+                )
             print(f"% unreachable:\t{num_crawled_out_edges/num_out_edges}")
 
 
 class NodeRemoval(Command):
     name = "removal"
-    help = "tests the hypothetical effect on the remaining nodes' consensus if different subgroups of the network " \
-           "were removed from the network"
+    help = (
+        "tests the hypothetical effect on the remaining nodes' consensus if different subgroups of the network "
+        "were removed from the network"
+    )
 
     def __init_arguments__(self, parser: ArgumentParser):
-        parser.add_argument("CRAWL_DB_FILE", type=str,
-                            help="path to the crawl database")
+        parser.add_argument(
+            "CRAWL_DB_FILE", type=str, help="path to the crawl database"
+        )
 
     def run(self, args):
-        graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE), only_crawled_nodes=True, bidirectional_edges=False)
+        graph = CrawlGraph.load(
+            CrawlDatabase(args.CRAWL_DB_FILE),
+            only_crawled_nodes=True,
+            bidirectional_edges=False,
+        )
         ordered_nodes = list(graph)
         weighted_graph = ProbabilisticWeightedCrawlGraph(graph)
         weighted_page_rank = weighted_graph.pagerank()
@@ -630,28 +732,51 @@ class NodeRemoval(Command):
         miner_probability = estimate_miner_probability(weighted_graph)
         distances = weighted_graph.probabilistic_shortest_distances()
         avg_dist_to_miner = expected_average_shortest_distance_to_miner(
-            crawl_graph=weighted_graph, distances=distances, miner_probability=miner_probability
+            crawl_graph=weighted_graph,
+            distances=distances,
+            miner_probability=miner_probability,
         )
-        tqdm.write("country,centrality change,distance to miner change", file=sys.stdout)
+        tqdm.write(
+            "country,centrality change,distance to miner change", file=sys.stdout
+        )
         for country_to_remove, nodes_to_remove in nodes_by_country.items():
             # Calculate the change in centrality
-            centrality_before = [weighted_page_rank[n] for n in ordered_nodes if n not in nodes_to_remove]
+            centrality_before = [
+                weighted_page_rank[n] for n in ordered_nodes if n not in nodes_to_remove
+            ]
             modified_graph = graph.filter(lambda n: n not in nodes_to_remove)
             modified_weighted_graph = ProbabilisticWeightedCrawlGraph(modified_graph)
             modified_weighted_page_rank = modified_weighted_graph.pagerank()
-            centrality_after = [modified_weighted_page_rank[n] for n in ordered_nodes if n not in nodes_to_remove]
+            centrality_after = [
+                modified_weighted_page_rank[n]
+                for n in ordered_nodes
+                if n not in nodes_to_remove
+            ]
             centrality_change = kl_divergence(centrality_before, centrality_after)
 
             # Calculate the change in distance to miners
-            distances_before = [avg_dist_to_miner[n] for n in ordered_nodes if n not in nodes_to_remove]
-            modified_distances = modified_weighted_graph.probabilistic_shortest_distances()
-            modified_avg_dist_to_miner = expected_average_shortest_distance_to_miner(
-                crawl_graph=modified_weighted_graph, distances=modified_distances, miner_probability=miner_probability
+            distances_before = [
+                avg_dist_to_miner[n] for n in ordered_nodes if n not in nodes_to_remove
+            ]
+            modified_distances = (
+                modified_weighted_graph.probabilistic_shortest_distances()
             )
-            distances_after = [modified_avg_dist_to_miner[n] for n in ordered_nodes if n not in nodes_to_remove]
+            modified_avg_dist_to_miner = expected_average_shortest_distance_to_miner(
+                crawl_graph=modified_weighted_graph,
+                distances=modified_distances,
+                miner_probability=miner_probability,
+            )
+            distances_after = [
+                modified_avg_dist_to_miner[n]
+                for n in ordered_nodes
+                if n not in nodes_to_remove
+            ]
             distances_change = kl_divergence(distances_before, distances_after)
 
-            tqdm.write(f"{country_to_remove},{centrality_change},{distances_change}", file=sys.stdout)
+            tqdm.write(
+                f"{country_to_remove},{centrality_change},{distances_change}",
+                file=sys.stdout,
+            )
 
 
 class Topology(Command):
@@ -659,26 +784,44 @@ class Topology(Command):
     help = "analyze the topology of a network"
 
     def __init_arguments__(self, parser: ArgumentParser):
-        parser.add_argument("CRAWL_DB_FILE", type=str,
-                            help="path to the crawl database")
-        parser.add_argument("--group-by",
-                            "-g",
-                            default="ip",
-                            choices=["ip", "city", "country", "continent", "version"],
-                            help="grouping of nodes (default: %(default)s)")
-        parser.add_argument("--only-crawled-nodes", action="store_true", help="only analyze nodes that were crawled; "
-                                                                              "do not include nodes that we discovered "
-                                                                              "but did not connect to")
-        parser.add_argument("--conglomerate", "-c", action="store_true",
-                            help="when calculating the PageRank of a group, instead of summing the constituent nodes'"
-                                 "ranks (the default), treat each group as its own supernode and use the PageRank of "
-                                 "the group nodes in the intersection graph formed by the groups")
-        parser.add_argument("--degree-dist", type=str, default=None,
-                            help="an optional path to an output file that will be a GNUplot graph of the degree "
-                                 "distribution of the nodes")
+        parser.add_argument(
+            "CRAWL_DB_FILE", type=str, help="path to the crawl database"
+        )
+        parser.add_argument(
+            "--group-by",
+            "-g",
+            default="ip",
+            choices=["ip", "city", "country", "continent", "version"],
+            help="grouping of nodes (default: %(default)s)",
+        )
+        parser.add_argument(
+            "--only-crawled-nodes",
+            action="store_true",
+            help="only analyze nodes that were crawled; "
+            "do not include nodes that we discovered "
+            "but did not connect to",
+        )
+        parser.add_argument(
+            "--conglomerate",
+            "-c",
+            action="store_true",
+            help="when calculating the PageRank of a group, instead of summing the constituent nodes'"
+            "ranks (the default), treat each group as its own supernode and use the PageRank of "
+            "the group nodes in the intersection graph formed by the groups",
+        )
+        parser.add_argument(
+            "--degree-dist",
+            type=str,
+            default=None,
+            help="an optional path to an output file that will be a GNUplot graph of the degree "
+            "distribution of the nodes",
+        )
 
     def run(self, args):
-        raw_graph = CrawlGraph.load(CrawlDatabase(args.CRAWL_DB_FILE), only_crawled_nodes=args.only_crawled_nodes)
+        raw_graph = CrawlGraph.load(
+            CrawlDatabase(args.CRAWL_DB_FILE),
+            only_crawled_nodes=args.only_crawled_nodes,
+        )
         num_nodes = len(raw_graph)
         if num_nodes == 0:
             sys.stderr.write("Error: The crawl contains no nodes!\n")
@@ -686,35 +829,46 @@ class Topology(Command):
         elif args.group_by == "ip":
             graph = raw_graph
             # OrderedDictType[Union[CrawledNode, NodeGroup[CrawledNode]], float]
-            page_rank: Dict[Union[CrawledNode, NodeGroup[CrawledNode]], float] = \
-                ProbabilisticWeightedCrawlGraph(graph).pagerank()
+            page_rank: Dict[
+                Union[CrawledNode, NodeGroup[CrawledNode]], float
+            ] = ProbabilisticWeightedCrawlGraph(graph).pagerank()
         else:
             if args.group_by == "city":
+
                 def grouper(n: CrawledNode) -> str:
                     loc = n.get_location()
                     if loc is None:
                         return "Unknown City"
                     return loc.city
+
             elif args.group_by == "country":
+
                 def grouper(n: CrawledNode) -> str:
                     loc = n.get_location()
                     if loc is None:
                         return "??"
                     return loc.country_code
+
             elif args.group_by == "continent":
+
                 def grouper(n: CrawledNode) -> str:
                     loc = n.get_location()
                     if loc is None:
                         return "??"
                     return loc.continent_code
+
             elif args.group_by == "version":
+
                 def grouper(n: CrawledNode) -> str:
                     v = n.get_version()
                     if v is None:
                         return "?"
                     return v.version
+
             else:
-                raise NotImplementedError(f"TODO: Implement support for --group-by={args.group_by}")
+                raise NotImplementedError(
+                    f"TODO: Implement support for --group-by={args.group_by}"
+                )
             graph = raw_graph.group_by(grouper)
             if args.conglomerate:
                 page_rank = ProbabilisticWeightedCrawlGraph(graph).pagerank()
@@ -724,15 +878,21 @@ class Topology(Command):
         # graph.to_dot().save("graph.dot")
         graph.prune()
         if len(graph) == 0:
-            sys.stderr.write("Error: The crawl is insufficient; all of the nodes are in their own connected "
-                             "components\n")
+            sys.stderr.write(
+                "Error: The crawl is insufficient; all of the nodes are in their own connected "
+                "components\n"
+            )
             return 1
 
         for node, rank in page_rank.items():
             if isinstance(node, NodeGroup):
-                print(f"{node.name}\t{rank}\t{len(node)}\t{len(node) / num_nodes * 100.0:0.1f}")
+                print(
+                    f"{node.name}\t{rank}\t{len(node)}\t{len(node) / num_nodes * 100.0:0.1f}"
+                )
             else:
-                print(f"[{node.ip!s}]:{node.port}\t{rank}\t1\t{1 / num_nodes * 100.0:0.1f}")
+                print(
+                    f"[{node.ip!s}]:{node.port}\t{rank}\t1\t{1 / num_nodes * 100.0:0.1f}"
+                )
         print(f"Edge Connectivity: {nx.edge_connectivity(graph)}")
         print(f"Out-degree: {Statistics((graph.out_degree[node] for node in graph))!s}")
         # print(f"Average shortest path length: {nx.average_shortest_path_length(graph)}")
@@ -741,16 +901,20 @@ class Topology(Command):
 
         with open(args.degree_dist, "w") as f:
             pdf_path = f"{Path(args.degree_dist).stem}.pdf"
-            f.write(f"""set term pdf enhanced color
+            f.write(
+                f"""set term pdf enhanced color
 set output \"{pdf_path}\"
 set logscale y
 set ylabel 'Number of Nodes'
 set xlabel 'Node Degree'
 
 plot '-' using ($1):(1.0) smooth freq with boxes t ''
-""")
+"""
+            )
             for node in graph:
                 f.write(f"{graph.out_degree[node]}\n")
-            sys.stderr.write(f"\nDegree distribution graph saved to {args.degree_dist}\n"
-                             f"Run `gnuplot {args.degree_dist}` to generate the graph in {pdf_path}\n")
+            sys.stderr.write(
+                f"\nDegree distribution graph saved to {args.degree_dist}\n"
+                f"Run `gnuplot {args.degree_dist}` to generate the graph in {pdf_path}\n"
+            )
         return 0

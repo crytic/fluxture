@@ -1,13 +1,14 @@
 import sqlite3
 from abc import abstractmethod
-from ipaddress import IPv4Address, IPv6Address as IPv6AddressPython
-from typing import Callable, FrozenSet, Generic, Optional, Set, Sized, TypeVar, Union
+from ipaddress import IPv4Address
+from ipaddress import IPv6Address as IPv6AddressPython
+from typing import (Callable, FrozenSet, Generic, Optional, Set, Sized,
+                    TypeVar, Union)
 
 from .blockchain import Miner, Node, Version
 from .db import Cursor, Database, ForeignKey, Model, Table
 from .geolocation import Geolocation
 from .serialization import DateTime, IntFlag, IPv6Address
-
 
 N = TypeVar("N", bound=Node)
 
@@ -47,24 +48,32 @@ class CrawledNode(Model["CrawlDatabase"]):
         return hash((self.ip, self.port))
 
     def get_events(self) -> Cursor["CrawlEvent"]:
-        return self.db.events.select(node=self.rowid, order_by="timestamp", order_direction="DESC")
+        return self.db.events.select(
+            node=self.rowid, order_by="timestamp", order_direction="DESC"
+        )
 
     def get_version(self) -> Optional[Version]:
         for version_event in self.db.events.select(
-            node=self.rowid, order_by="timestamp", order_direction="DESC", limit=1, event="version"
+            node=self.rowid,
+            order_by="timestamp",
+            order_direction="DESC",
+            limit=1,
+            event="version",
         ):
             return Version(version_event.description, version_event.timestamp)
         return None
 
     def get_location(self) -> Optional[Geolocation]:
-        return self.db.locations.select(ip=self.ip, order_by="timestamp DESC", limit=1).fetchone()
+        return self.db.locations.select(
+            ip=self.ip, order_by="timestamp DESC", limit=1
+        ).fetchone()
 
     def last_crawled(self) -> Optional[DateTime]:
         max_edge = Cursor(
             self.db.edges,
             "SELECT a.* FROM edges a LEFT OUTER JOIN edges b ON a.rowid = b.rowid AND a.timestamp < b.timestamp "
             "WHERE b.rowid is NULL AND a.from_node = ? LIMIT 1",
-            (self.rowid,)
+            (self.rowid,),
         ).fetchone()
         if max_edge is None:
             return None
@@ -77,7 +86,7 @@ class CrawledNode(Model["CrawlDatabase"]):
                 self.db.edges,
                 "SELECT a.* FROM edges a LEFT OUTER JOIN edges b ON a.rowid = b.rowid AND a.timestamp < b.timestamp "
                 "WHERE b.rowid is NULL AND a.from_node = ?",
-                (self.rowid,)
+                (self.rowid,),
             )
         }
 
@@ -88,7 +97,7 @@ class CrawledNode(Model["CrawlDatabase"]):
                 "SELECT count(a.*) FROM edges a "
                 "LEFT OUTER JOIN edges b ON a.rowid = b.rowid AND a.timestamp < b.timestamp "
                 "WHERE b.rowid is NULL AND a.from_node = ?",
-                (self.rowid,)
+                (self.rowid,),
             )
             return result.fetchone()[0]
         finally:
@@ -123,7 +132,7 @@ class CrawlDatabase(Database):
         return Cursor(
             self.nodes,
             f"SELECT DISTINCT n.*, n.rowid FROM {self.nodes.name} n WHERE n.state >= ?",
-            (CrawlState.CONNECTED,)
+            (CrawlState.CONNECTED,),
         )
 
 
@@ -141,7 +150,13 @@ class Crawl(Generic[N], Sized):
         raise NotImplementedError()
 
     @abstractmethod
-    def add_event(self, node: CrawledNode, event: str, description: str, timestamp: Optional[DateTime] = None):
+    def add_event(
+        self,
+        node: CrawledNode,
+        event: str,
+        description: str,
+        timestamp: Optional[DateTime] = None,
+    ):
         raise NotImplementedError()
 
     @abstractmethod
@@ -178,12 +193,14 @@ class Crawl(Generic[N], Sized):
 
 class DatabaseCrawl(Generic[N], Crawl[N]):
     def __init__(
-            self,
-            constructor: Callable[[Union[str, IPv4Address, IPv6AddressPython], int], N],
-            db: CrawlDatabase
+        self,
+        constructor: Callable[[Union[str, IPv4Address, IPv6AddressPython], int], N],
+        db: CrawlDatabase,
     ):
         super().__init__()
-        self.constructor: Callable[[Union[str, IPv4Address, IPv6AddressPython], int], N] = constructor
+        self.constructor: Callable[
+            [Union[str, IPv4Address, IPv6AddressPython], int], N
+        ] = constructor
         self.db: CrawlDatabase = db
 
     def __contains__(self, node: N) -> bool:
@@ -213,34 +230,47 @@ class DatabaseCrawl(Generic[N], Crawl[N]):
         with self.db:
             self.db.nodes.update(node)
 
-    def add_event(self, node: CrawledNode, event: str, description: str, timestamp: Optional[DateTime] = None):
+    def add_event(
+        self,
+        node: CrawledNode,
+        event: str,
+        description: str,
+        timestamp: Optional[DateTime] = None,
+    ):
         with self.db:
             if timestamp is None:
                 timestamp = DateTime()
-            self.db.events.append(CrawlEvent(
-                node=node.rowid,
-                event=event,
-                description=description,
-                timestamp=timestamp
-            ))
+            self.db.events.append(
+                CrawlEvent(
+                    node=node.rowid,
+                    event=event,
+                    description=description,
+                    timestamp=timestamp,
+                )
+            )
 
     def get_neighbors(self, node: N) -> FrozenSet[N]:
-        return frozenset({
-            self.constructor(neighbor.ip, neighbor.port) for neighbor in self.get_node(node).get_latest_edges()
-        })
+        return frozenset(
+            {
+                self.constructor(neighbor.ip, neighbor.port)
+                for neighbor in self.get_node(node).get_latest_edges()
+            }
+        )
 
     def set_neighbors(self, node: N, neighbors: FrozenSet[N]):
         with self.db:
             crawled_node = self.get_node(node)
             timestamp = DateTime()
-            self.db.edges.extend([
-                Edge(
-                    from_node=crawled_node,
-                    to_node=self.get_node(neighbor),
-                    timestamp=timestamp
-                )
-                for neighbor in neighbors
-            ])
+            self.db.edges.extend(
+                [
+                    Edge(
+                        from_node=crawled_node,
+                        to_node=self.get_node(neighbor),
+                        timestamp=timestamp,
+                    )
+                    for neighbor in neighbors
+                ]
+            )
             self.add_state(node, CrawlState.GOT_NEIGHBORS)
             for neighbor in neighbors:
                 # Make sure we record that we discovered the neighbor
