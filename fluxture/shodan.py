@@ -3,32 +3,32 @@ from abc import ABC
 from argparse import ArgumentParser, Namespace
 from getpass import getpass
 from time import sleep
-from typing import Any, AsyncIterator, Callable, Dict, Iterable, Iterator, Optional, Tuple
+from typing import (Any, AsyncIterator, Callable, Dict, Iterable, Iterator,
+                    Optional, Tuple)
 
 import keyring
 from shodan import APIError, Shodan
 
 from .async_utils import iterator_to_async, sync_to_async
 from .bitcoin import Node
-from .crawler import Crawler, CrawlListener
 from .crawl_schema import HostInfo
+from .crawler import Crawler, CrawlListener
 from .fluxture import Command
 from .serialization import DateTime, IPv6Address
-
 
 KEYRING_NAME: str = "fluxture"
 
 
 def prompt(
-        message: str,
-        yes_options: Tuple[str, ...] = ('y', 'yes'),
-        no_options: Tuple[str, ...] = ('n', 'no'),
-        default: bool = True
+    message: str,
+    yes_options: Tuple[str, ...] = ("y", "yes"),
+    no_options: Tuple[str, ...] = ("n", "no"),
+    default: bool = True,
 ) -> bool:
     if default:
-        yes_options = yes_options + ('',)
+        yes_options = yes_options + ("",)
     else:
-        no_options = no_options + ('',)
+        no_options = no_options + ("",)
     while True:
         ret = input(message).strip().lower()
         if ret in yes_options:
@@ -46,7 +46,9 @@ class ShodanResult(HostInfo):
         if "ip" in kwargs:
             ip: IPv6Address = IPv6Address(kwargs["ip"])
         else:
-            raise ValueError(f"Shodan Result does not contain an IP address: {kwargs!r}")
+            raise ValueError(
+                f"Shodan Result does not contain an IP address: {kwargs!r}"
+            )
         if "isp" in kwargs:
             isp: Optional[str] = kwargs["isp"]
         else:
@@ -84,7 +86,8 @@ class ShodanResult(HostInfo):
     def __repr__(self):
         kwargs = "".join(
             [
-                f", {argname!s}={argvalue!r}" for argname, argvalue in self.result.items()
+                f", {argname!s}={argvalue!r}"
+                for argname, argvalue in self.result.items()
                 if argname != "ip" and argname != "isp"
             ]
         )
@@ -101,15 +104,21 @@ SEARCH_QUERIES: Dict[str, "SearchQuery"] = {}
 
 
 class SearchQuery(Query):
-    def __init__(self, name: str, query: str, callback: Optional[Callable[["Query"], Any]] = None):
+    def __init__(
+        self, name: str, query: str, callback: Optional[Callable[["Query"], Any]] = None
+    ):
         super().__init__(name=name, callback=callback)
         self.query: str = query
 
     @staticmethod
-    def register(name: str, query: str, callback: Optional[Callable[["Query"], Any]] = None) -> "SearchQuery":
+    def register(
+        name: str, query: str, callback: Optional[Callable[["Query"], Any]] = None
+    ) -> "SearchQuery":
         sq = SearchQuery(name=name, query=query, callback=callback)
         if name in SEARCH_QUERIES:
-            raise KeyError(f"A search query of name \"{name}\" is already registered: {SEARCH_QUERIES[name]!r}")
+            raise KeyError(
+                f'A search query of name "{name}" is already registered: {SEARCH_QUERIES[name]!r}'
+            )
         SEARCH_QUERIES[name] = sq
         return sq
 
@@ -139,10 +148,14 @@ def get_api(api_key: Optional[str] = None) -> Shodan:
         api_key = keychain_key
         if api_key is None:
             api_key = getpass(f"Shodan API KEY: ")
-            if prompt("Would you like to save this API key to the system keychain for future use? [Yn] "):
+            if prompt(
+                "Would you like to save this API key to the system keychain for future use? [Yn] "
+            ):
                 save_keychain_api_key(api_key)
     elif keychain_key is None:
-        if prompt("Would you like to save this API key to the system keychain for future use? [Yn] "):
+        if prompt(
+            "Would you like to save this API key to the system keychain for future use? [Yn] "
+        ):
             save_keychain_api_key(api_key)
     elif api_key != keychain_key:
         print("This is a different API key than what is stored in the system keychain.")
@@ -153,9 +166,15 @@ def get_api(api_key: Optional[str] = None) -> Shodan:
 
 class ShodanCommand:
     def __init_arguments__(self, parser: ArgumentParser):
-        parser.add_argument("--api-key", "-k", type=str, default=None, help="Shodan API key. If omitted, a saved "
-                            "API key in the system keychain will be used, if one exists. Otherwise the user will be "
-                            "prompted to enter an API key.")
+        parser.add_argument(
+            "--api-key",
+            "-k",
+            type=str,
+            default=None,
+            help="Shodan API key. If omitted, a saved "
+            "API key in the system keychain will be used, if one exists. Otherwise the user will be "
+            "prompted to enter an API key.",
+        )
 
 
 class ActiveNodes(ShodanCommand, Command):
@@ -224,7 +243,9 @@ class HostInfoFetcher(CrawlListener):
         while len(self.node_queue) >= batch_size > 0:
             to_process = self.node_queue[:batch_size]
             self.node_queue = self.node_queue[batch_size:]
-            for info in await HostInfoFetcher.get_host_info((p.address for p in to_process)):
+            for info in await HostInfoFetcher.get_host_info(
+                (p.address for p in to_process)
+            ):
                 crawler.crawl.set_host_info(info)
 
     # async def on_crawl_node(self, crawler: Crawler, node: Node):

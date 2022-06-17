@@ -17,8 +17,12 @@ def setLevel(level: Union[int, str]):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Fluxture: a peer-to-peer network crawler")
-    parser.add_argument("--debug", action="store_true", help="set the log level to debug")
+    parser = argparse.ArgumentParser(
+        description="Fluxture: a peer-to-peer network crawler"
+    )
+    parser.add_argument(
+        "--debug", action="store_true", help="set the log level to debug"
+    )
 
     add_command_subparsers(parser)
 

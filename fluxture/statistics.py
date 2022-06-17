@@ -2,7 +2,6 @@ from functools import wraps
 from math import sqrt
 from typing import Iterable, Iterator, List, Optional, Tuple, Union
 
-
 Numeric = Union[int, float]
 
 
@@ -75,7 +74,7 @@ class Statistics:
         if not self:
             return 0.0
         avg = self.average
-        return sqrt(sum((x - avg)**2.0 for x in self) / len(self))
+        return sqrt(sum((x - avg) ** 2.0 for x in self) / len(self))
 
     @property
     @memoize

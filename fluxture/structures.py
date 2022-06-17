@@ -2,11 +2,14 @@ import asyncio
 import itertools
 from abc import ABCMeta
 from collections import OrderedDict
-from typing import Generic, Iterator, KeysView, Type, TypeVar, Tuple, ValuesView as ValuesViewType, ValuesView, \
-    OrderedDict as OrderedDictType
+from typing import Generic, Iterator, KeysView
+from typing import OrderedDict as OrderedDictType
+from typing import Tuple, Type, TypeVar
+from typing import ValuesView
+from typing import ValuesView as ValuesViewType
 
-from fluxture.serialization import AbstractIntEnum, ByteOrder, FixedSize, P, Packable, UnpackError
-
+from fluxture.serialization import (AbstractIntEnum, ByteOrder, FixedSize, P,
+                                    Packable, UnpackError)
 
 F = TypeVar("F")
 
@@ -23,9 +26,13 @@ class StructMeta(ABCMeta, Generic[F]):
                 # so inherit all of the superclass's fields
                 for field_name, field_type in base.FIELDS.items():
                     if field_name in fields:
-                        raise TypeError(f"{name} inherits field {field_name} from both {base.__name__} and "
-                                        f"{field_sources[field_name]}")
-                    elif hasattr(base, "non_serialized") and field_name not in getattr(base, "non_serialized"):
+                        raise TypeError(
+                            f"{name} inherits field {field_name} from both {base.__name__} and "
+                            f"{field_sources[field_name]}"
+                        )
+                    elif hasattr(base, "non_serialized") and field_name not in getattr(
+                        base, "non_serialized"
+                    ):
                         field_sources[field_name] = base
                         fields[field_name] = field_type
         if "non_serialized" in clsdict:
@@ -36,7 +43,9 @@ class StructMeta(ABCMeta, Generic[F]):
         if "__annotations__" in clsdict:
             for field_name, field_type in clsdict["__annotations__"].items():
                 if field_name in field_sources:
-                    raise TypeError(f"{name} cannot redefine field {field_name} from {field_sources[field_name]}")
+                    raise TypeError(
+                        f"{name} cannot redefine field {field_name} from {field_sources[field_name]}"
+                    )
                 elif field_name not in non_serialized:
                     fields[field_name] = field_type
         super().__init__(name, bases, clsdict)
@@ -53,24 +62,35 @@ class StructMeta(ABCMeta, Generic[F]):
 
 class Struct(Generic[F], metaclass=StructMeta[F]):
     def __init__(self, *args, **kwargs):
-        unsatisfied_fields = [name for name in self.__class__.FIELDS.keys() if name not in kwargs]
+        unsatisfied_fields = [
+            name for name in self.__class__.FIELDS.keys() if name not in kwargs
+        ]
         if len(args) > len(unsatisfied_fields):
-            raise ValueError(f"Unexpected positional argument: {args[len(unsatisfied_fields)]}")
+            raise ValueError(
+                f"Unexpected positional argument: {args[len(unsatisfied_fields)]}"
+            )
         elif len(args) < len(unsatisfied_fields):
             # see if any of the unsatisfied fields have defaults:
-            for name in unsatisfied_fields[len(args):]:
+            for name in unsatisfied_fields[len(args) :]:
                 field_type = self.__class__.FIELDS[name]
-                if hasattr(field_type, "column_options") and field_type.column_options.default is not None:
+                if (
+                    hasattr(field_type, "column_options")
+                    and field_type.column_options.default is not None
+                ):
                     kwargs[name] = field_type.column_options.default
                 elif issubclass(field_type, AbstractIntEnum):
                     kwargs[name] = field_type.DEFAULT
                 else:
                     raise ValueError(f"Missing argument for {name} in {self.__class__}")
-            unsatisfied_fields = unsatisfied_fields[:len(args)]
-        for name, value in itertools.chain(kwargs.items(), zip(unsatisfied_fields, args)):
+            unsatisfied_fields = unsatisfied_fields[: len(args)]
+        for name, value in itertools.chain(
+            kwargs.items(), zip(unsatisfied_fields, args)
+        ):
             if name not in self.__class__.FIELDS:
-                raise TypeError(f"{self.__class__.__name__}.__init__() got an unexpected keyword argument '{name}'. "
-                                f"Valid arguments are: {', '.join(self.__class__.FIELDS.keys())}")
+                raise TypeError(
+                    f"{self.__class__.__name__}.__init__() got an unexpected keyword argument '{name}'. "
+                    f"Valid arguments are: {', '.join(self.__class__.FIELDS.keys())}"
+                )
             elif isinstance(value, self.__class__.FIELDS[name]):
                 # the value was already passed as the correct type
                 setattr(self, name, value)
@@ -104,62 +124,89 @@ class Struct(Generic[F], metaclass=StructMeta[F]):
         return ValuesView(self)
 
     def __eq__(self, other):
-        return isinstance(other, Struct) and len(self) == len(other) and all(
-            a == b for (_, a), (_, b) in zip(self.items(), other.items())
+        return (
+            isinstance(other, Struct)
+            and len(self) == len(other)
+            and all(a == b for (_, a), (_, b) in zip(self.items(), other.items()))
         )
 
     def __ne__(self, other):
         return not (self == other)
 
     def __str__(self):
-        types = "".join(f"    {field_name} = {field_value!s};\n" for field_name, field_value in self.items())
+        types = "".join(
+            f"    {field_name} = {field_value!s};\n"
+            for field_name, field_value in self.items()
+        )
         newline = "\n"
         return f"typedef struct {{{['', newline][len(types) > 0]}{types}}} {self.__class__.__name__}"
 
     def __repr__(self):
-        args = [f"{name}={getattr(self, name)!r}" for name in self.__class__.FIELDS.keys()]
+        args = [
+            f"{name}={getattr(self, name)!r}" for name in self.__class__.FIELDS.keys()
+        ]
         return f"{self.__class__.__name__}({', '.join(args)})"
 
 
 class PackableStruct(Generic[P], Struct[P]):
     def pack(self, byte_order: ByteOrder = ByteOrder.NETWORK) -> bytes:
         # TODO: Combine the formats and use a single struct.pack instead
-        return b"".join(getattr(self, field_name).pack(byte_order) for field_name in self.__class__.FIELDS.keys())
+        return b"".join(
+            getattr(self, field_name).pack(byte_order)
+            for field_name in self.__class__.FIELDS.keys()
+        )
 
     @classmethod
     def validate_fields(cls, fields: OrderedDictType[str, Type[F]]):
         for field_name, field_type in fields.items():
             if not isinstance(field_type, Packable):
-                raise TypeError(f"Field {field_name} of {cls.__name__} must be Packable, not {field_type}")
+                raise TypeError(
+                    f"Field {field_name} of {cls.__name__} must be Packable, not {field_type}"
+                )
 
     @classmethod
-    def unpack(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> P:
+    def unpack(
+        cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK
+    ) -> P:
         ret, remaining = cls.unpack_partial(data, byte_order)
         if remaining:
             raise ValueError(f"Unexpected trailing bytes: {remaining!r}")
         return ret
 
     @classmethod
-    def unpack_partial(cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK) -> Tuple[P, bytes]:
+    def unpack_partial(
+        cls: Type[P], data: bytes, byte_order: ByteOrder = ByteOrder.NETWORK
+    ) -> Tuple[P, bytes]:
         remaining_data = data
         args = []
         for field_name, field_type in cls.FIELDS.items():
             try:
-                field, remaining_data = field_type.unpack_partial(remaining_data, byte_order)
+                field, remaining_data = field_type.unpack_partial(
+                    remaining_data, byte_order
+                )
                 errored = False
             except UnpackError:
                 errored = True
             if errored:
-                parsed_fields = [f"{field_name} = {arg!r}" for field_name, arg in zip(cls.FIELDS.keys(), args)]
+                parsed_fields = [
+                    f"{field_name} = {arg!r}"
+                    for field_name, arg in zip(cls.FIELDS.keys(), args)
+                ]
                 parsed_fields = ", ".join(parsed_fields)
-                raise UnpackError(f"Error parsing field {cls.__name__}.{field_name} (field {len(args)+1}) of type "
-                                  f"{field_type.__name__} from bytes {remaining_data!r}. Prior parsed field values: "
-                                  f"{parsed_fields}")
+                raise UnpackError(
+                    f"Error parsing field {cls.__name__}.{field_name} (field {len(args)+1}) of type "
+                    f"{field_type.__name__} from bytes {remaining_data!r}. Prior parsed field values: "
+                    f"{parsed_fields}"
+                )
             args.append(field)
         return cls(*args), remaining_data
 
     @classmethod
-    async def read(cls: Type[P], reader: asyncio.StreamReader, byte_order: ByteOrder = ByteOrder.NETWORK) -> P:
+    async def read(
+        cls: Type[P],
+        reader: asyncio.StreamReader,
+        byte_order: ByteOrder = ByteOrder.NETWORK,
+    ) -> P:
         if hasattr(cls, "num_bytes"):
             data = await reader.read(cls.num_bytes)
             return cls.unpack(data, byte_order)
@@ -172,9 +219,14 @@ class PackableStruct(Generic[P], Struct[P]):
             except UnpackError:
                 errored = True
             if errored:
-                parsed_fields = [f"{field_name} = {arg!r}" for field_name, arg in zip(cls.FIELDS.keys(), args)]
+                parsed_fields = [
+                    f"{field_name} = {arg!r}"
+                    for field_name, arg in zip(cls.FIELDS.keys(), args)
+                ]
                 parsed_fields = ", ".join(parsed_fields)
-                raise UnpackError(f"Error parsing field {cls.__name__}.{field_name} (field {len(args) + 1}) of type "
-                                  f"{field_type.__name__}. Prior parsed field values: {parsed_fields}")
+                raise UnpackError(
+                    f"Error parsing field {cls.__name__}.{field_name} (field {len(args) + 1}) of type "
+                    f"{field_type.__name__}. Prior parsed field values: {parsed_fields}"
+                )
             args.append(field)
         return cls(*args)

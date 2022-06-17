@@ -1,7 +1,6 @@
 import sqlite3
-from typing import (
-    Any, cast, Dict, Generic, Iterable, Iterator, List, Optional, OrderedDict, Tuple, Type, TypeVar, Union
-)
+from typing import (Any, Dict, Generic, Iterable, Iterator, List, Optional,
+                    OrderedDict, Tuple, Type, TypeVar, Union, cast)
 
 from .serialization import Packable
 from .structures import Struct, StructMeta
@@ -16,7 +15,11 @@ class AutoIncrement(int):
     initialized: bool = False
 
     def __new__(cls, *args):
-        if args and (len(args) > 1 or not isinstance(args[0], AutoIncrement) or args[0].initialized):
+        if args and (
+            len(args) > 1
+            or not isinstance(args[0], AutoIncrement)
+            or args[0].initialized
+        ):
             retval = int.__new__(cls, *args)
             setattr(retval, "initialized", True)
         else:
@@ -35,7 +38,9 @@ class RowId(int):
     initialized: bool = False
 
     def __new__(cls, *args):
-        if args and (len(args) > 1 or not isinstance(args[0], RowId) or args[0].initialized):
+        if args and (
+            len(args) > 1 or not isinstance(args[0], RowId) or args[0].initialized
+        ):
             retval = int.__new__(cls, *args)
             setattr(retval, "initialized", True)
         else:
@@ -50,7 +55,9 @@ class RowId(int):
             return f"{self.__class__.__name__}()"
 
     def __eq__(self, other):
-        return isinstance(other, RowId) and (not self.initialized or not other.initialized or int(self) == int(other))
+        return isinstance(other, RowId) and (
+            not self.initialized or not other.initialized or int(self) == int(other)
+        )
 
 
 class ColumnOptions:
@@ -76,11 +83,15 @@ class ColumnOptions:
 
     def set_options(self) -> Iterator[str]:
         return iter(
-            key_name for key_name in dir(self) if not key_name.startswith("_") and self.is_set(key_name)
+            key_name
+            for key_name in dir(self)
+            if not key_name.startswith("_") and self.is_set(key_name)
         )
 
     def items(self) -> Iterator[Tuple[str, Any]]:
-        return iter((key_name, getattr(self, key_name)) for key_name in self.set_options())
+        return iter(
+            (key_name, getattr(self, key_name)) for key_name in self.set_options()
+        )
 
     def __or__(self, other: "ColumnOptions") -> "ColumnOptions":
         new_options = ColumnOptions(**dict(other.items()))
@@ -90,9 +101,13 @@ class ColumnOptions:
         return new_options
 
     def __sub__(self, other: "ColumnOptions") -> "ColumnOptions":
-        return ColumnOptions(**{
-            key_name: value for key_name, value in self.items() if not other.is_set(key_name)
-        })
+        return ColumnOptions(
+            **{
+                key_name: value
+                for key_name, value in self.items()
+                if not other.is_set(key_name)
+            }
+        )
 
     def type_suffix(self) -> str:
         return "".join(
@@ -122,18 +137,14 @@ class ColumnOptions:
         return f"{self.__class__.__name__}({', '.join(args)})"
 
 
-def column_options(
-        ty: Type[T],
-        options: ColumnOptions
-) -> Type[T]:
+def column_options(ty: Type[T], options: ColumnOptions) -> Type[T]:
     if hasattr(ty, "column_options") and ty.column_options is not None:
         options = ty.column_options | options
         type_suffix = (options - ty.column_options).type_suffix()
     else:
         type_suffix = options.type_suffix()
     return cast(
-        Type[T],
-        type(f"{ty.__name__}{type_suffix}", (ty,), {"column_options": options})
+        Type[T], type(f"{ty.__name__}{type_suffix}", (ty,), {"column_options": options})
     )
 
 
@@ -168,8 +179,11 @@ class Model(Struct[FieldType], Generic[D]):
 
     @staticmethod
     def is_primary_key(cls) -> bool:
-        return hasattr(cls, "column_options") and cls.column_options is not None \
-               and cls.column_options.primary_key
+        return (
+            hasattr(cls, "column_options")
+            and cls.column_options is not None
+            and cls.column_options.primary_key
+        )
 
     @classmethod
     def validate_fields(cls, fields: OrderedDict[str, Type[FieldType]]):
@@ -180,12 +194,16 @@ class Model(Struct[FieldType], Generic[D]):
                     if issubclass(field_type, valid_type):
                         break
                 else:
-                    raise TypeError(f"Database field {field_name} of {cls.__name__} is type {field_type!r}, but "
-                                    f"must be one of {COLUMN_TYPES!r}")
+                    raise TypeError(
+                        f"Database field {field_name} of {cls.__name__} is type {field_type!r}, but "
+                        f"must be one of {COLUMN_TYPES!r}"
+                    )
             if Model.is_primary_key(field_type):
                 if primary_name is not None:
-                    raise TypeError(f"A model can have at most one primary key, but both {primary_name} and "
-                                    f"{field_name} were specified in {cls.__name__}")
+                    raise TypeError(
+                        f"A model can have at most one primary key, but both {primary_name} and "
+                        f"{field_name} were specified in {cls.__name__}"
+                    )
                 primary_name = field_name
         if primary_name is not None:
             cls.primary_key_name = primary_name
@@ -212,14 +230,18 @@ class Model(Struct[FieldType], Generic[D]):
     def db(self, db: D):
         if self._db is not None:
             if self._db != db:
-                raise ValueError(f"Model {self!r} is already associated with a different database: {db!r}")
+                raise ValueError(
+                    f"Model {self!r} is already associated with a different database: {db!r}"
+                )
         else:
             self._db = db
 
     def to_row(self) -> Iterator[FieldType]:
         for key in self.keys():
             value = getattr(self, key)
-            if (isinstance(value, AutoIncrement) or isinstance(value, RowId)) and not value.initialized:
+            if (
+                isinstance(value, AutoIncrement) or isinstance(value, RowId)
+            ) and not value.initialized:
                 yield None
             else:
                 yield getattr(self, key)
@@ -229,16 +251,22 @@ M = TypeVar("M", bound=Model)
 
 
 def sql_format(
-        param: Optional[FieldType], expected_type: Optional[Type[FieldType]] = None
+    param: Optional[FieldType], expected_type: Optional[Type[FieldType]] = None
 ) -> Optional[Union[str, bytes, int, float]]:
     if param is None:
-        if expected_type is not None and hasattr(expected_type, "column_options") \
-                and expected_type.column_options is not None and expected_type.column_options.not_null:
+        if (
+            expected_type is not None
+            and hasattr(expected_type, "column_options")
+            and expected_type.column_options is not None
+            and expected_type.column_options.not_null
+        ):
             raise ValueError(f"Field {expected_type!r} cannot be NULL")
         return None
     elif isinstance(param, Model) and expected_type is not None:
         if not issubclass(expected_type, ForeignKey):
-            raise ValueError(f"Model {param!r} was expected to be of type {expected_type!r}")
+            raise ValueError(
+                f"Model {param!r} was expected to be of type {expected_type!r}"
+            )
         return getattr(param, expected_type.key)
     elif isinstance(param, int):
         return int(param)
@@ -266,7 +294,9 @@ class DatabaseConnection(sqlite3.Connection):
         try:
             return super().execute(sql, params)
         except sqlite3.Error as e:
-            raise ValueError(f"Error executing SQL {sql!r} with parameters {params!r}: {e!r}")
+            raise ValueError(
+                f"Error executing SQL {sql!r} with parameters {params!r}: {e!r}"
+            )
 
     def __enter__(self) -> "DatabaseConnection":
         return self
@@ -281,17 +311,29 @@ class DatabaseConnection(sqlite3.Connection):
 
 
 class Cursor(Generic[M]):
-    def __init__(self, table: "Table[M]", sql: str, params: Iterable[Union[str, int, float, bytes, Packable]] = ()):
+    def __init__(
+        self,
+        table: "Table[M]",
+        sql: str,
+        params: Iterable[Union[str, int, float, bytes, Packable]] = (),
+    ):
         self.table: Table[M] = table
         self.sql: str = sql
         self.params: List[Union[str, int, float, bytes]] = []
         for i, p in enumerate(params):
-            if isinstance(p, str) or isinstance(p, int) or isinstance(p, float) or isinstance(p, bytes):
+            if (
+                isinstance(p, str)
+                or isinstance(p, int)
+                or isinstance(p, float)
+                or isinstance(p, bytes)
+            ):
                 self.params.append(p)
             elif isinstance(p, Packable):
                 self.params.append(p.pack())
             else:
-                raise ValueError(f"Unsupported SQL parameter #{i+1}, {p!r}, when running {sql!r}")
+                raise ValueError(
+                    f"Unsupported SQL parameter #{i+1}, {p!r}, when running {sql!r}"
+                )
         self._item_iter: Optional[Iterator[M]] = None
 
     def __iter__(self) -> Iterator[M]:
@@ -328,7 +370,9 @@ class Table(Generic[M]):
 
     def __init__(self, db: "Database", name: str):
         if self.model_type is None:
-            raise TypeError(f"A Table must be instantiated by subclassing it with a model: `Table[ModelType]`")
+            raise TypeError(
+                f"A Table must be instantiated by subclassing it with a model: `Table[ModelType]`"
+            )
         self.db: Database = db
         self.model_type: Type[M] = self.model_type
         self.name: str = name
@@ -339,18 +383,25 @@ class Table(Generic[M]):
     def __class_getitem__(cls, model_type: Type[M]) -> Type["Table[M]"]:
         if isinstance(model_type, TypeVar) or isinstance(model_type, str):
             return cls
-        return cast(Type[Table[M]], type(f"{cls.__name__}{model_type.__name__}", (cls,), {"model_type": model_type}))
+        return cast(
+            Type[Table[M]],
+            type(
+                f"{cls.__name__}{model_type.__name__}",
+                (cls,),
+                {"model_type": model_type},
+            ),
+        )
 
     def __iter__(self) -> Iterator[M]:
         yield from iter(self.select())
 
     def select(
-            self,
-            distinct: bool = False,
-            limit: Optional[int] = None,
-            order_by: Optional[str] = None,
-            order_direction: str = "ASC",
-            **kwargs
+        self,
+        distinct: bool = False,
+        limit: Optional[int] = None,
+        order_by: Optional[str] = None,
+        order_direction: str = "ASC",
+        **kwargs,
     ) -> Cursor[M]:
         params = []
         where_clauses = []
@@ -375,7 +426,9 @@ class Table(Generic[M]):
             distinct_clause = " DISTINCT"
         else:
             distinct_clause = ""
-        return Cursor(self, f"SELECT{distinct_clause} *, rowid from {self.name}{clauses}", params)
+        return Cursor(
+            self, f"SELECT{distinct_clause} *, rowid from {self.name}{clauses}", params
+        )
 
     def __len__(self):
         with self.db:
@@ -392,7 +445,9 @@ class Table(Generic[M]):
             try:
                 obj_in_db = next(iter(self.select(**{"rowid": row.rowid})))
             except StopIteration:
-                raise ValueError(f"Row {row} was expected to be in the database in table {self.name}, but was not")
+                raise ValueError(
+                    f"Row {row} was expected to be in the database in table {self.name}, but was not"
+                )
             for key in to_update:
                 setattr(row, key, getattr(obj_in_db, key))
         row.db = self.db
@@ -411,12 +466,16 @@ class Table(Generic[M]):
                 for row in rows:
                     if row.in_db:
                         raise ValueError(f"Row {row!r} is already in the database!")
-                    result = cur.execute(f"INSERT INTO {self.name} ({','.join(self.model_type.FIELDS.keys())}) "
-                                         f"VALUES ({','.join(['?']*len(self.model_type.FIELDS))})", tuple(
-                                            sql_format(param, expected_type)
-                                            for param, expected_type
-                                            in zip(row.to_row(), self.model_type.FIELDS.values())
-                                         ))
+                    result = cur.execute(
+                        f"INSERT INTO {self.name} ({','.join(self.model_type.FIELDS.keys())}) "
+                        f"VALUES ({','.join(['?']*len(self.model_type.FIELDS))})",
+                        tuple(
+                            sql_format(param, expected_type)
+                            for param, expected_type in zip(
+                                row.to_row(), self.model_type.FIELDS.values()
+                            )
+                        ),
+                    )
                     setattr(row, "rowid", RowId(result.lastrowid))
                     self._finalize_added_row(row)
             finally:
@@ -426,16 +485,26 @@ class Table(Generic[M]):
         if not row.in_db:
             raise ValueError(f"Row {row!r} is not yet in the database!")
         with self.db:
-            set_argument = ",".join([f"{field_name} = ?" for field_name in self.model_type.FIELDS.keys() if field_name != "rowid"])
+            set_argument = ",".join(
+                [
+                    f"{field_name} = ?"
+                    for field_name in self.model_type.FIELDS.keys()
+                    if field_name != "rowid"
+                ]
+            )
             new_values = tuple(
                 sql_format(param, expected_type)
-                for param, (field_name, expected_type)
-                in zip(row.to_row(), self.model_type.FIELDS.items())
+                for param, (field_name, expected_type) in zip(
+                    row.to_row(), self.model_type.FIELDS.items()
+                )
                 if field_name != "rowid"
             )
             cur = self.db.con.cursor()
             try:
-                cur.execute(f"UPDATE {self.name} SET {set_argument} WHERE rowid=?", new_values + (int(row.rowid),))
+                cur.execute(
+                    f"UPDATE {self.name} SET {set_argument} WHERE rowid=?",
+                    new_values + (int(row.rowid),),
+                )
             finally:
                 cur.close()
 
@@ -446,46 +515,64 @@ class ForeignKey(Generic[M]):
     foreign_col_name: str
     table: Optional[Table[M]] = None
 
-    def __init__(self, key: Union[int, str, bytes, float, M], table: Optional[Table[M]] = None):
+    def __init__(
+        self, key: Union[int, str, bytes, float, M], table: Optional[Table[M]] = None
+    ):
         self._row: Optional[M] = None
         if table is not None:
             self.table = table
         if isinstance(key, Model):
             if not hasattr(self, "foreign_col_name"):
-                raise ValueError(f"Foreign key {self!r} has not yet been assigned to a table!")
+                raise ValueError(
+                    f"Foreign key {self!r} has not yet been assigned to a table!"
+                )
             elif not isinstance(key, self.row_type):
-                raise ValueError(f"Foreign key {self!r} was expeted to be passed a value of type {self.row_type!r} "
-                                 f"but was instead passed {key!r}")
-            self.key: Union[int, str, bytes, float] = getattr(key, self.foreign_col_name)
+                raise ValueError(
+                    f"Foreign key {self!r} was expeted to be passed a value of type {self.row_type!r} "
+                    f"but was instead passed {key!r}"
+                )
+            self.key: Union[int, str, bytes, float] = getattr(
+                key, self.foreign_col_name
+            )
         else:
             self.key = key
 
     def __class_getitem__(
-            cls,
-            arguments: Union[TypeVar, Tuple[str, Type[M]], Tuple[str, Type[M], str], Table[M]]
+        cls,
+        arguments: Union[
+            TypeVar, Tuple[str, Type[M]], Tuple[str, Type[M], str], Table[M]
+        ],
     ) -> "ForeignKey[M]":
         if isinstance(arguments, TypeVar):
             return cls
         elif isinstance(arguments, Table):
             if not hasattr(cls, "foreign_table_name") or not cls.foreign_col_name:
-                raise ValueError("A table can only be passed to a ForeignKey that already has a `foreign_table_name`")
+                raise ValueError(
+                    "A table can only be passed to a ForeignKey that already has a `foreign_table_name`"
+                )
             return cast(
                 ForeignKey[M],
-                type(f"{cls.__name__}{arguments.model_type.__name__.capitalize()}"
-                     f"{cls.foreign_col_name.replace('_', '').capitalize()}", (cls,),
-                     {
-                         "table": arguments
-                     })
+                type(
+                    f"{cls.__name__}{arguments.model_type.__name__.capitalize()}"
+                    f"{cls.foreign_col_name.replace('_', '').capitalize()}",
+                    (cls,),
+                    {"table": arguments},
+                ),
             )
         else:
-            if not isinstance(arguments, tuple) or not (2 <= len(arguments) <= 3) or \
-                    not isinstance(arguments[0], str) or not issubclass(arguments[1], Model) or (
-                        len(arguments) == 3 and not isinstance(arguments[2], str)
+            if (
+                not isinstance(arguments, tuple)
+                or not (2 <= len(arguments) <= 3)
+                or not isinstance(arguments[0], str)
+                or not issubclass(arguments[1], Model)
+                or (len(arguments) == 3 and not isinstance(arguments[2], str))
             ):
-                raise TypeError(f"Invalid ForeignKey arguments: {list(arguments)!r}. Expected either two or three "
-                                "arguments: (1) a string for the foreign table name; (2) the `Model` type for that "
-                                "table; and, optionally, (3) the foreign column name. If (3) is omitted, the primary "
-                                "key for the foreign table is used.")
+                raise TypeError(
+                    f"Invalid ForeignKey arguments: {list(arguments)!r}. Expected either two or three "
+                    "arguments: (1) a string for the foreign table name; (2) the `Model` type for that "
+                    "table; and, optionally, (3) the foreign column name. If (3) is omitted, the primary "
+                    "key for the foreign table is used."
+                )
             if len(arguments) == 3:
                 table_name, model, row_name = arguments
             else:
@@ -493,11 +580,15 @@ class ForeignKey(Generic[M]):
                 row_name = model.primary_key_name
         return cast(
             ForeignKey[M],
-            type(f"{cls.__name__}{model.__name__.capitalize()}{row_name.replace('_', '').capitalize()}", (cls,), {
-                "row_type": model,
-                "foreign_col_name": row_name,
-                "foreign_table_name": table_name
-            })
+            type(
+                f"{cls.__name__}{model.__name__.capitalize()}{row_name.replace('_', '').capitalize()}",
+                (cls,),
+                {
+                    "row_type": model,
+                    "foreign_col_name": row_name,
+                    "foreign_table_name": table_name,
+                },
+            ),
         )
 
     @classmethod
@@ -509,7 +600,7 @@ class ForeignKey(Generic[M]):
             options = {}
         return cast(
             Type[Union[int, float, str, bytes, Packable]],
-            type(f"{foreign_type.__name__}ForeignKey", (foreign_type,), options)
+            type(f"{foreign_type.__name__}ForeignKey", (foreign_type,), options),
         )
 
     @property
@@ -518,7 +609,9 @@ class ForeignKey(Generic[M]):
             if self.table is None:
                 raise ValueError(f"{self.__class__.__name__} must have a `table` set")
             foreign_table = getattr(self.table.db, self.foreign_table_name)
-            self._row = next(iter(foreign_table.select(**{self.foreign_col_name: self.key})))
+            self._row = next(
+                iter(foreign_table.select(**{self.foreign_col_name: self.key}))
+            )
         return self._row
 
     def __getattr__(self, item):
@@ -549,7 +642,9 @@ class ForeignKey(Generic[M]):
 class Database(metaclass=StructMeta[Model]):
     def __init__(self, path: str = ":memory:", rollback_on_exception: bool = False):
         self.path: str = path
-        self.con = DatabaseConnection(self.path, rollback_on_exception=rollback_on_exception)
+        self.con = DatabaseConnection(
+            self.path, rollback_on_exception=rollback_on_exception
+        )
         self.tables: Dict[str, Table] = {}
         if self.FIELDS:
             with self:
@@ -560,8 +655,10 @@ class Database(metaclass=StructMeta[Model]):
     def validate_fields(cls, fields: OrderedDict[str, Type[FieldType]]):
         for field_name, field_type in fields.items():
             if not issubclass(field_type, Table):
-                raise TypeError(f"Database {cls!r} table `{field_name}` was expected to be of type `Table` but "
-                                f"was instead {field_type!r}")
+                raise TypeError(
+                    f"Database {cls!r} table `{field_name}` was expected to be of type `Table` but "
+                    f"was instead {field_type!r}"
+                )
 
     def __enter__(self: D) -> D:
         # self.con.__enter__()
@@ -594,9 +691,14 @@ class Database(metaclass=StructMeta[Model]):
             elif issubclass(field_type, bytes) or isinstance(field_type, Packable):
                 data_type = "BLOB"
             else:
-                raise TypeError(f"Column {field_name} is of unsupported type {field_type!r}; it must be one of "
-                                f"{COLUMN_TYPES}")
-            if hasattr(field_type, "column_options") and field_type.column_options is not None:
+                raise TypeError(
+                    f"Column {field_name} is of unsupported type {field_type!r}; it must be one of "
+                    f"{COLUMN_TYPES}"
+                )
+            if (
+                hasattr(field_type, "column_options")
+                and field_type.column_options is not None
+            ):
                 modifiers = field_type.column_options.sql_modifiers()
                 if modifiers:
                     modifiers = f" {modifiers}"
@@ -607,6 +709,8 @@ class Database(metaclass=StructMeta[Model]):
         if len(columns) > 1:
             column_constraints = "\n    " + column_constraints + "\n"
         with self:
-            self.con.execute(f"CREATE TABLE IF NOT EXISTS {table.name} ({column_constraints});")
+            self.con.execute(
+                f"CREATE TABLE IF NOT EXISTS {table.name} ({column_constraints});"
+            )
         self.tables[table_name] = table
         return table

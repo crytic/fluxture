@@ -1,7 +1,7 @@
-from inspect import isclass
-from pkgutil import iter_modules
-from pathlib import Path
 from importlib import import_module
+from inspect import isclass
+from pathlib import Path
+from pkgutil import iter_modules
 
 # Automatically load all modules in the `fluxture` package,
 # so all Fluxture plugins will auto-register themselves:

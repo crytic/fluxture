@@ -1,11 +1,12 @@
 import asyncio
 import socket
 from abc import ABCMeta, abstractmethod
-from ipaddress import ip_address, IPv4Address, IPv6Address
-from typing import AsyncIterator, Dict, FrozenSet, Generic, Optional, Tuple, Type, TypeVar, Union
+from ipaddress import IPv4Address, IPv6Address, ip_address
+from typing import (AsyncIterator, Dict, FrozenSet, Generic, Optional, Tuple,
+                    Type, TypeVar, Union)
 
-from .messaging import Message
 from . import serialization
+from .messaging import Message
 
 
 class BlockchainError(RuntimeError):
@@ -34,7 +35,12 @@ class Version:
 
 
 class Node(metaclass=ABCMeta):
-    def __init__(self, address: Union[str, bytes, IPv4Address, IPv6Address], port: int, source: str = "peer"):
+    def __init__(
+        self,
+        address: Union[str, bytes, IPv4Address, IPv6Address],
+        port: int,
+        source: str = "peer",
+    ):
         if not isinstance(address, IPv6Address):
             self.address: IPv6Address = serialization.IPv6Address(address)
         else:
@@ -48,7 +54,11 @@ class Node(metaclass=ABCMeta):
 
     @property
     def is_running(self) -> bool:
-        return self._reader is not None and self._stop is not None and not self._stop.is_set()
+        return (
+            self._reader is not None
+            and self._stop is not None
+            and not self._stop.is_set()
+        )
 
     def terminate(self):
         if self._stop is not None:
@@ -75,7 +85,7 @@ class Node(metaclass=ABCMeta):
             self._reader, self._writer = await asyncio.open_connection(
                 str(self.address),
                 self.port,
-                happy_eyeballs_delay=0.25  # this causes IPv4 and IPv6 attempts to be interleaved
+                happy_eyeballs_delay=0.25,  # this causes IPv4 and IPv6 attempts to be interleaved
             )
             if self._stop is None:
                 self._stop = asyncio.Event()
@@ -114,17 +124,23 @@ class Node(metaclass=ABCMeta):
         return hash((self.address, self.port))
 
     def __eq__(self, other):
-        return isinstance(other, Node) and other.address == self.address and other.port == self.port
+        return (
+            isinstance(other, Node)
+            and other.address == self.address
+            and other.port == self.port
+        )
 
     def __repr__(self):
-        return f"{self.__class__.__name__}(address={self.address!r}, port={self.port!r})"
+        return (
+            f"{self.__class__.__name__}(address={self.address!r}, port={self.port!r})"
+        )
 
     @abstractmethod
     async def run(self) -> AsyncIterator[Message]:
         raise NotImplementedError()
 
 
-N = TypeVar('N', bound=Node)
+N = TypeVar("N", bound=Node)
 
 
 BLOCKCHAINS: Dict[str, Type["Blockchain[Node]"]] = {}

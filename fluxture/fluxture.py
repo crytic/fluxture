@@ -1,8 +1,7 @@
-from abc import abstractmethod, ABC, ABCMeta
+from abc import ABC, ABCMeta, abstractmethod
 from argparse import ArgumentParser, Namespace
 from inspect import isabstract
 from typing import Dict, Tuple, Type
-
 
 PLUGINS: Dict[str, Type["Plugin"]] = {}
 COMMANDS: Dict[str, Type["Command"]] = {}
@@ -15,12 +14,16 @@ class PluginMeta(ABCMeta):
             if "name" not in clsdict:
                 raise TypeError(f"Fluxture plugin {name} does not define a name")
             elif clsdict["name"] in PLUGINS:
-                raise TypeError(f"Cannot instaitiate class {cls.__name__} because a plugin named {name} already exists,"
-                                f" implemented by class {PLUGINS[clsdict['name']]}")
+                raise TypeError(
+                    f"Cannot instaitiate class {cls.__name__} because a plugin named {name} already exists,"
+                    f" implemented by class {PLUGINS[clsdict['name']]}"
+                )
             PLUGINS[clsdict["name"]] = cls
             if issubclass(cls, Command):
                 if "help" not in clsdict:
-                    raise TypeError(f"Fluxture command {name} does not define a help string")
+                    raise TypeError(
+                        f"Fluxture command {name} does not define a help string"
+                    )
                 COMMANDS[clsdict["name"]] = cls
 
 
@@ -44,8 +47,13 @@ class Command(Plugin):
 
 
 def add_command_subparsers(parser: ArgumentParser):
-    subparsers = parser.add_subparsers(title="command", description="valid fluxture commands",
-                                       help="run `fluxture command --help` for help on a specific command")
+    subparsers = parser.add_subparsers(
+        title="command",
+        description="valid fluxture commands",
+        help="run `fluxture command --help` for help on a specific command",
+    )
     for name, command_type in COMMANDS.items():
-        p = subparsers.add_parser(name, parents=command_type.parent_parsers, help=command_type.help)
+        p = subparsers.add_parser(
+            name, parents=command_type.parent_parsers, help=command_type.help
+        )
         p.set_defaults(func=command_type(p).run)
