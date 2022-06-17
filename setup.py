@@ -18,7 +18,7 @@ setup(
         'lxml~=4.6.2',
         'networkx~=2.4',
         'numpy>=1.19.4',
-        'shapely~=1.7.1',
+        'shapely~=1.8.0',
         'shodan~=1.24.0',
         'six>=1.5',
         'tqdm>=4.48.0',
