@@ -22,7 +22,7 @@ setup(
         "shodan~=1.24.0",
         "six>=1.5",
         "tqdm>=4.48.0",
-        "typing_extensions~=4.20 ; python_version < '3.8'",
+        "typing_extensions~=4.2.0 ; python_version < '3.8'",
     ],
     extras_require={"dev": ["flake8", "pytest", "twine"]},
     entry_points={"console_scripts": ["fluxture = fluxture.__main__:main"]},
