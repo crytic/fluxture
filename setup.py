@@ -15,7 +15,7 @@ setup(
         "graphviz~=0.14.1",
         "great-circle-calculator~=1.1.0",
         "keyring~=21.8.0",
-        "lxml~=4.6.2",
+        "lxml~=4.9.1",
         "networkx~=2.4",
         "numpy>=1.19.4",
         "shapely~=1.8.0",
