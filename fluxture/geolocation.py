@@ -113,7 +113,29 @@ def download_maxmind_db(
                         geolite_dir = tarinfo.name
                 if geolite_dir is None:
                     raise GeoIP2Error("Unexpected GeoLite2 database format")
-                tar.extractall(str(city_db_path.parent))
+                
+                import os
+                
+                def is_within_directory(directory, target):
+                    
+                    abs_directory = os.path.abspath(directory)
+                    abs_target = os.path.abspath(target)
+                
+                    prefix = os.path.commonprefix([abs_directory, abs_target])
+                    
+                    return prefix == abs_directory
+                
+                def safe_extract(tar, path=".", members=None, *, numeric_owner=False):
+                
+                    for member in tar.getmembers():
+                        member_path = os.path.join(path, member.name)
+                        if not is_within_directory(path, member_path):
+                            raise Exception("Attempted Path Traversal in Tar File")
+                
+                    tar.extractall(path, members, numeric_owner) 
+                    
+                
+                safe_extract(tar, str(city_db_path.parent))
                 latest_dir = db_dir / "GeoLite2-City_latest"
                 latest_dir.unlink(missing_ok=True)
                 latest_dir.symlink_to(db_dir / geolite_dir)
