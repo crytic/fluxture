@@ -2,7 +2,7 @@
 
 [![PyPI version](https://badge.fury.io/py/fluxture.svg)](https://badge.fury.io/py/fluxture)
 [![Tests](https://github.com/trailofbits/fluxture/workflows/Tests/badge.svg)](https://github.com/trailofbits/fluxture/actions)
-[![Slack Status](https://empireslacking.herokuapp.com/badge.svg)](https://empireslacking.herokuapp.com)
+[![Slack Status](https://slack.empirehacking.nyc/badge.svg)](https://slack.empirehacking.nyc)
 
 Fluxture is a lightweight crawler for peer-to-peer networks like Blockchains. It currently supports the latest version
 of the Bitcoin protocol: 70015. It implements the minimum amount of the Bitcoin protocol necessary to collect geographic
