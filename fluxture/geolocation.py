@@ -4,12 +4,7 @@ from ipaddress import IPv4Address as PythonIPv4
 from ipaddress import IPv6Address as PythonIPv6
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import Iterator, Optional, Tuple, Union
-
-try:
-    from typing import Protocol
-except ImportError:
-    from typing_extensions import Protocol
+from typing import Iterator, Optional, Protocol, Tuple, Union
 
 import geoip2.database
 import great_circle_calculator.great_circle_calculator as gcc

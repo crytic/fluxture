@@ -8,7 +8,7 @@ setup(
     author="Trail of Bits",
     version="0.0.1",
     packages=find_packages(exclude=["test"]),
-    python_requires=">=3.7",
+    python_requires=">=3.10",
     install_requires=[
         "fastkml~=0.11",
         "geoip2~=4.1.0",
@@ -22,7 +22,6 @@ setup(
         "shodan~=1.24.0",
         "six>=1.5",
         "tqdm>=4.48.0",
-        "typing_extensions~=4.2.0 ; python_version < '3.8'",
     ],
     extras_require={"dev": ["flake8", "pytest", "twine"]},
     entry_points={"console_scripts": ["fluxture = fluxture.__main__:main"]},
