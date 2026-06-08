@@ -9,12 +9,7 @@ from enum import Enum as PythonEnum
 from inspect import isabstract
 from typing import Dict, Generic, Iterator
 from typing import OrderedDict as OrderedDictType
-from typing import Tuple, Type, TypeVar, Union
-
-try:
-    from typing import Protocol, runtime_checkable
-except ImportError:
-    from typing_extensions import Protocol, runtime_checkable
+from typing import runtime_checkable, Protocol, Tuple, Type, TypeVar, Union
 
 
 P = TypeVar("P")
